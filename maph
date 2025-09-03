@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""
+maph - Map Perfect Hash CLI tool
+
+A command-line interface for creating and querying space-efficient approximate mappings.
+Supports multi-dimensional functions with tuple inputs and outputs.
+"""
+
+import argparse
+import sys
+import json
+import csv
+import pickle
+from typing import List, Tuple, Any, Optional, Union
+from pathlib import Path
+
+try:
+    import approximate_filters as af
+except ImportError:
+    print("Error: approximate_filters module not found. Please install with: pip install -e .", file=sys.stderr)
+    sys.exit(1)
+
+class MaphCLI:
+    """Command-line interface for maph."""
+    
+    def __init__(self):
+        self.parser = self._create_parser()
+    
+    def _create_parser(self):
+        """Create argument parser."""
+        parser = argparse.ArgumentParser(
+            description='maph - Map Perfect Hash: Space-efficient approximate function storage',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Examples:
+  # Simple key-value mapping
+  echo -e "alice,1\\nbob,2\\ncharlie,3" | maph -b 16
+
+  # Multi-dimensional function (x,y,z) -> (a,b)
+  maph -i data.csv --input-cols 0,1,2 --output-cols 3,4 -b 32
+
+  # Build and save filter
+  maph -i data.csv --save model.maph -b 16
+
+  # Query saved filter
+  maph --load model.maph --query "x,y,z"
+
+  # JSON input/output
+  maph -i data.json --format json -o results.json
+
+  # With target false positive rate
+  maph -i data.csv --fpr 0.01 -b 8
+            """
+        )
+        
+        # Input/Output options
+        parser.add_argument('-i', '--input', default='-', 
+                          help='Input file (default: stdin)')
+        parser.add_argument('-o', '--output', default='-',
+                          help='Output file (default: stdout)')
+        
+        # Format options
+        parser.add_argument('-f', '--format', default='auto',
+                          choices=['auto', 'csv', 'tsv', 'json', 'pairs'],
+                          help='Input/output format (default: auto)')
+        parser.add_argument('-d', '--delimiter', default=None,
+                          help='Field delimiter for CSV/TSV')
+        parser.add_argument('--header', action='store_true',
+                          help='First line is header (CSV/TSV)')
+        
+        # Storage options
+        parser.add_argument('-b', '--bits', type=int, default=32,
+                          choices=[8, 16, 32, 64],
+                          help='Storage bits per entry (default: 32)')
+        parser.add_argument('-e', '--error-rate', type=float, default=0.0,
+                          help='Perfect hash error rate (default: 0.0)')
+        parser.add_argument('-l', '--load-factor', type=float, default=1.23,
+                          help='Load factor (default: 1.23)')
+        parser.add_argument('--fpr', type=float, default=None,
+                          help='Target false positive rate (for threshold filters)')
+        
+        # Column specification
+        parser.add_argument('--input-cols', type=str, default=None,
+                          help='Input columns (e.g., "0,1,2" or "1-3")')
+        parser.add_argument('--output-cols', type=str, default=None,
+                          help='Output columns (e.g., "3,4" or "4-5")')
+        
+        # Model operations
+        parser.add_argument('--save', type=str, default=None,
+                          help='Save filter to file')
+        parser.add_argument('--load', type=str, default=None,
+                          help='Load filter from file')
+        
+        # Query mode
+        parser.add_argument('-q', '--query', type=str, default=None,
+                          help='Query values (comma-separated)')
+        parser.add_argument('--batch-query', action='store_true',
+                          help='Read queries from input (one per line)')
+        
+        # Other options
+        parser.add_argument('-v', '--verbose', action='store_true',
+                          help='Verbose output')
+        parser.add_argument('--stats', action='store_true',
+                          help='Show statistics only')
+        
+        return parser
+    
+    def parse_columns(self, spec: str) -> List[int]:
+        """Parse column specification."""
+        if not spec:
+            return []
+        
+        cols = []
+        for part in spec.split(','):
+            if '-' in part:
+                # Range specification
+                start, end = map(int, part.split('-'))
+                cols.extend(range(start, end + 1))
+            else:
+                # Single column
+                cols.append(int(part))
+        
+        return cols
+    
+    def detect_delimiter(self, line: str) -> str:
+        """Auto-detect delimiter from line."""
+        if '\t' in line:
+            return '\t'
+        elif ',' in line:
+            return ','
+        elif '|' in line:
+            return '|'
+        return ','
+    
+    def read_data(self, args) -> List[Tuple[Tuple, Tuple]]:
+        """Read input data and return list of (input_tuple, output_tuple)."""
+        data = []
+        
+        # Open input
+        if args.input == '-':
+            input_file = sys.stdin
+        else:
+            input_file = open(args.input, 'r')
+        
+        try:
+            # Detect format
+            if args.format == 'json' or (args.format == 'auto' and args.input.endswith('.json')):
+                # JSON format
+                json_data = json.load(input_file)
+                
+                if isinstance(json_data, list):
+                    for item in json_data:
+                        if isinstance(item, dict):
+                            # Expect 'input' and 'output' keys
+                            input_val = item.get('input', item.get('key', ''))
+                            output_val = item.get('output', item.get('value', ''))
+                            
+                            # Convert to tuples
+                            input_tuple = (input_val,) if not isinstance(input_val, (list, tuple)) else tuple(input_val)
+                            output_tuple = (output_val,) if not isinstance(output_val, (list, tuple)) else tuple(output_val)
+                            
+                            data.append((input_tuple, output_tuple))
+                        elif isinstance(item, (list, tuple)) and len(item) == 2:
+                            # Pair format
+                            input_val, output_val = item
+                            input_tuple = (input_val,) if not isinstance(input_val, (list, tuple)) else tuple(input_val)
+                            output_tuple = (output_val,) if not isinstance(output_val, (list, tuple)) else tuple(output_val)
+                            data.append((input_tuple, output_tuple))
+            else:
+                # CSV/TSV format
+                delimiter = args.delimiter
+                first_line = True
+                
+                for line_num, line in enumerate(input_file, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Auto-detect delimiter
+                    if first_line and delimiter is None:
+                        delimiter = self.detect_delimiter(line)
+                        if args.verbose:
+                            print(f"Detected delimiter: '{delimiter}'", file=sys.stderr)
+                    
+                    # Skip header if specified
+                    if first_line and args.header:
+                        first_line = False
+                        continue
+                    first_line = False
+                    
+                    # Split fields
+                    fields = line.split(delimiter)
+                    
+                    # Parse columns
+                    input_cols = self.parse_columns(args.input_cols) if args.input_cols else None
+                    output_cols = self.parse_columns(args.output_cols) if args.output_cols else None
+                    
+                    # Default column assignment
+                    if input_cols is None and output_cols is None:
+                        # Simple key-value: first column is input, rest are output
+                        input_cols = [0]
+                        output_cols = list(range(1, len(fields)))
+                    elif input_cols is None:
+                        # All non-output columns are inputs
+                        input_cols = [i for i in range(len(fields)) if i not in output_cols]
+                    elif output_cols is None:
+                        # All non-input columns are outputs
+                        output_cols = [i for i in range(len(fields)) if i not in input_cols]
+                    
+                    # Extract tuples
+                    try:
+                        input_tuple = tuple(fields[i] for i in input_cols if i < len(fields))
+                        output_tuple = tuple(fields[i] for i in output_cols if i < len(fields))
+                        
+                        if input_tuple and output_tuple:
+                            data.append((input_tuple, output_tuple))
+                    except IndexError as e:
+                        if args.verbose:
+                            print(f"Warning: Skipping line {line_num}: {e}", file=sys.stderr)
+        
+        finally:
+            if args.input != '-':
+                input_file.close()
+        
+        return data
+    
+    def build_filter(self, data: List[Tuple[Tuple, Tuple]], args):
+        """Build filter from data."""
+        if args.verbose:
+            print(f"Building filter with {len(data)} mappings...", file=sys.stderr)
+            if data:
+                print(f"Input dimensions: {len(data[0][0])}", file=sys.stderr)
+                print(f"Output dimensions: {len(data[0][1])}", file=sys.stderr)
+        
+        # Convert tuples to strings for hashing
+        keys = []
+        values = []
+        
+        for input_tuple, output_tuple in data:
+            # Join tuple elements with unit separator
+            key = '\x1F'.join(str(x) for x in input_tuple)
+            value = '\x1F'.join(str(x) for x in output_tuple)
+            keys.append(key)
+            values.append(value)
+        
+        # Create filter based on requirements
+        if args.fpr is not None:
+            # Threshold filter with target FPR
+            filter_obj = af.create_threshold_filter(keys, args.fpr, bits=args.bits)
+        else:
+            # Standard filter
+            filter_obj = af.create_filter(keys, bits=args.bits, error_rate=args.error_rate)
+        
+        # Save if requested
+        if args.save:
+            with open(args.save, 'wb') as f:
+                pickle.dump({
+                    'filter': filter_obj,
+                    'keys': keys,
+                    'values': values,
+                    'bits': args.bits,
+                    'input_dims': len(data[0][0]) if data else 0,
+                    'output_dims': len(data[0][1]) if data else 0
+                }, f)
+            
+            if args.verbose:
+                print(f"Filter saved to: {args.save}", file=sys.stderr)
+        
+        return filter_obj, keys, values
+    
+    def query_filter(self, filter_obj, keys: List[str], values: List[str], query: str) -> Optional[str]:
+        """Query filter for a value."""
+        if query in filter_obj:
+            # Find corresponding value (simplified - in practice would use compact lookup)
+            try:
+                idx = keys.index(query)
+                return values[idx]
+            except (ValueError, IndexError):
+                return "[present but value not stored]"
+        return None
+    
+    def output_results(self, args, filter_obj=None, data=None, query_results=None):
+        """Output results in requested format."""
+        # Open output
+        if args.output == '-':
+            output_file = sys.stdout
+        else:
+            output_file = open(args.output, 'w')
+        
+        try:
+            if args.stats and filter_obj:
+                # Statistics mode
+                stats = {
+                    'type': 'maph_filter',
+                    'storage_bits': args.bits,
+                    'entries': len(data) if data else 0,
+                    'storage_bytes': filter_obj.storage_bytes() if hasattr(filter_obj, 'storage_bytes') else 0,
+                    'theoretical_fpr': filter_obj.fpr if hasattr(filter_obj, 'fpr') else 0,
+                    'error_rate': args.error_rate,
+                    'load_factor': args.load_factor
+                }
+                
+                if args.format == 'json':
+                    json.dump(stats, output_file, indent=2)
+                else:
+                    for key, value in stats.items():
+                        print(f"{key}: {value}", file=output_file)
+            
+            elif query_results is not None:
+                # Query results
+                if args.format == 'json':
+                    json.dump(query_results, output_file, indent=2)
+                else:
+                    for query, result in query_results.items():
+                        if result is not None:
+                            print(f"{query} -> {result}", file=output_file)
+                        else:
+                            print(f"{query} -> NOT FOUND", file=output_file)
+            
+            else:
+                # Build complete message
+                print(f"Filter built successfully with {args.bits}-bit storage", file=output_file)
+        
+        finally:
+            if args.output != '-':
+                output_file.close()
+    
+    def run(self):
+        """Run the CLI."""
+        args = self.parser.parse_args()
+        
+        try:
+            if args.load:
+                # Load existing filter
+                with open(args.load, 'rb') as f:
+                    saved = pickle.load(f)
+                    filter_obj = saved['filter']
+                    keys = saved.get('keys', [])
+                    values = saved.get('values', [])
+                
+                if args.verbose:
+                    print(f"Loaded filter from: {args.load}", file=sys.stderr)
+                
+                # Query mode
+                if args.query:
+                    queries = args.query.split(',')
+                    results = {}
+                    for q in queries:
+                        results[q] = self.query_filter(filter_obj, keys, values, q)
+                    self.output_results(args, query_results=results)
+                
+                elif args.batch_query:
+                    # Read queries from input
+                    results = {}
+                    for line in sys.stdin:
+                        q = line.strip()
+                        if q:
+                            results[q] = self.query_filter(filter_obj, keys, values, q)
+                    self.output_results(args, query_results=results)
+                
+                elif args.stats:
+                    self.output_results(args, filter_obj=filter_obj)
+            
+            else:
+                # Build mode
+                data = self.read_data(args)
+                
+                if not data:
+                    print("Error: No data to process", file=sys.stderr)
+                    sys.exit(1)
+                
+                filter_obj, keys, values = self.build_filter(data, args)
+                
+                if args.query:
+                    # Immediate query after build
+                    queries = args.query.split(',')
+                    results = {}
+                    for q in queries:
+                        results[q] = self.query_filter(filter_obj, keys, values, q)
+                    self.output_results(args, query_results=results)
+                else:
+                    self.output_results(args, filter_obj=filter_obj, data=data)
+        
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)
+
+if __name__ == '__main__':
+    cli = MaphCLI()
+    cli.run()

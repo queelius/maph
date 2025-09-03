@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/rd_ph_filterTargets.cmake")
+
+check_required_components(rd_ph_filter)
