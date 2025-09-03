@@ -1,0 +1,9 @@
+theme: jekyll-theme-minimal
+title: maph
+description: Space-efficient approximate mappings using perfect hash functions
+show_downloads: true
+google_analytics:
+logo: 
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
