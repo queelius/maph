@@ -2,19 +2,23 @@
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-2.0.1--mmap-green.svg)]()
+
+> **Note: This is the mmap-only release branch (v2.0.1-mmap)**
+> This version is optimized for maximum performance with memory-mapped storage, providing zero-copy IPC and persistence. For a more generic version with allocator support (coming soon), see the master branch.
 
 A high-performance, memory-mapped database and generalized framework for space-efficient approximate data structures with O(1) lookups. Built on perfect hash functions, maph provides sub-microsecond access to arbitrary mappings (f: X → Y) with configurable storage and custom decoders.
 
-## Key Features
+## Key Features (mmap-only version)
 
 - **O(1) Lookups**: Guaranteed constant-time operations with perfect hash optimization
-- **Memory-Mapped Storage**: Zero-copy access via mmap for minimal memory overhead  
+- **Memory-Mapped Storage**: Zero-copy access via mmap for minimal memory overhead
 - **Lock-Free Operations**: Atomic operations for thread-safe concurrent access
-- **Generalized Framework**: Support for arbitrary mappings X → Y, not just membership
+- **Zero-Copy IPC**: Multiple processes can share the same hash table without serialization
+- **Persistence**: Data automatically persists to disk and survives process restarts
+- **OpenMP Parallel**: Multi-threaded construction and batch operations
+- **SIMD Optimized**: AVX2/AVX-512 acceleration for hash computations
 - **JSON Database**: Built-in daemon for JSON key-value storage with REST API
-- **Configurable Storage**: 8/16/32/64-bit storage options for space/accuracy trade-offs
-- **Custom Decoders**: Extensible decoder system for specialized applications
-- **SIMD Optimized**: AVX2 acceleration for batch operations
 
 ## Performance
 
