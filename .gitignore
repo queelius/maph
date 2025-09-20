@@ -135,3 +135,4 @@ httplib.h
 .env
 .env.local
 config.local.*
+integrations/rest_api/_deps/
