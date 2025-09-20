@@ -1,0 +1,11 @@
+<map id="integrations/rest_api/_deps/usockets&#45;src/src/internal/internal.h" name="integrations/rest_api/_deps/usockets&#45;src/src/internal/internal.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="33,5,205,60"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,115,92,141"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="101,62,68,106,64,102,97,59"/>
+<area shape="rect" id="Node000003" href="$d4/df8/bsd_8h.html" title=" " alt="" coords="117,108,266,148"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="142,59,171,96,166,99,138,62"/>
+<area shape="rect" id="Node000004" href="$d4/dcc/libusockets_8h.html" title=" " alt="" coords="73,196,179,221"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="178,150,146,187,142,184,173,147"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="204,196,307,221"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="209,147,239,183,235,187,205,150"/>
+</map>

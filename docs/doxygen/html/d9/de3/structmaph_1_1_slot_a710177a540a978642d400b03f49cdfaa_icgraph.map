@@ -1,0 +1,19 @@
+<map id="maph::Slot::view" name="maph::Slot::view">
+<area shape="rect" id="Node000001" title="Get a string_view of the stored value." alt="" coords="643,56,773,81"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#afc223233ec9a3bbb0e9c87c26b07aac5" title="Get value for a key." alt="" coords="458,80,590,105"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="629,82,591,87,590,81,629,76"/>
+<area shape="rect" id="Node000008" href="$d1/d87/classmaph_1_1_maph.html#ae3f40ce35f8a59fa2f5a8059f602599e" title="Scan all key&#45;value pairs in the database." alt="" coords="453,19,595,44"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="631,56,586,47,587,41,632,51"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#a978b07cf927266378e68748e2e98aa30" title="Check if a key exists." alt="" coords="255,55,405,80"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="444,85,405,80,406,75,445,80"/>
+<area shape="rect" id="Node000004" href="$d3/d43/maph__server__simple_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97" title=" " alt="" coords="303,5,357,31"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="482,77,404,44,357,28,358,23,406,40,484,72"/>
+<area shape="rect" id="Node000005" href="$d1/d87/classmaph_1_1_maph.html#af89b86e7f1a1579a931f792f72bf7bd7" title="Get multiple keys in a single operation." alt="" coords="257,104,403,129"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="445,105,404,110,403,105,444,100"/>
+<area shape="rect" id="Node000006" href="$d1/d87/classmaph_1_1_maph.html#a3f0d5be96a66024a6df136cb115f539b" title=" " alt="" coords="5,129,207,155"/>
+<area shape="poly" id="edge7_Node000002_Node000006" title=" " alt="" coords="488,114,449,131,406,143,355,151,304,154,207,154,207,148,303,149,355,146,405,138,447,126,486,109"/>
+<area shape="rect" id="Node000007" href="$d1/d87/classmaph_1_1_maph.html#a5d44d9f1ac62c1de4e0677aa37f4ecb7" title=" " alt="" coords="257,205,403,231"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="501,117,458,152,407,188,367,208,365,203,404,184,455,148,497,113"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="244,129,207,133,207,128,243,124"/>
+<area shape="poly" id="edge9_Node000008_Node000004" title=" " alt="" coords="439,28,358,23,358,17,440,23"/>
+</map>

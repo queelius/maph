@@ -1,0 +1,9 @@
+<map id="bsd_create_connect_socket_unix" name="bsd_create_connect_socket_unix">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,23,156,63"/>
+<area shape="rect" id="Node000002" href="$d9/d08/bsd_8c.html#a2ef118ef12071bb6c5e6545ad7a79599" title=" " alt="" coords="204,31,347,56"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="156,41,190,41,190,46,156,46"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#a25e6266dc6b5dd494d6eabe05fccfd0c" title=" " alt="" coords="407,5,541,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="347,32,393,26,393,31,347,37"/>
+<area shape="rect" id="Node000004" href="$d9/d08/bsd_8c.html#a1509470e32bdec560c66356edecc81c7" title=" " alt="" coords="395,55,553,80"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="347,49,382,53,381,59,347,55"/>
+</map>

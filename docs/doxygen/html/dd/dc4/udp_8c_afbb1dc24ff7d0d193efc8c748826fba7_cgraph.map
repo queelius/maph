@@ -1,0 +1,9 @@
+<map id="internal_on_udp_read" name="internal_on_udp_read">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,31,168,56"/>
+<area shape="rect" id="Node000002" href="$dd/dc4/udp_8c.html#a378b79fc85298728c39297d7d679cb26" title=" " alt="" coords="216,31,388,56"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="168,41,203,41,203,46,168,46"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#accc5be3d9f65105705f9a32a419c5ad7" title=" " alt="" coords="436,5,557,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="388,30,422,25,423,30,388,35"/>
+<area shape="rect" id="Node000004" href="$d4/dcc/libusockets_8h.html#a442b8a40f50d68abe9877c51a615ce7d" title=" " alt="" coords="453,55,541,80"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="388,51,439,58,439,63,388,57"/>
+</map>

@@ -1,0 +1,7 @@
+<map id="bsd_addr_get_port" name="bsd_addr_get_port">
+<area shape="rect" id="Node000001" title=" " alt="" coords="219,31,361,56"/>
+<area shape="rect" id="Node000002" href="$dd/dc4/udp_8c.html#adde137517b157692a494c302c4e05df0" title=" " alt="" coords="5,5,171,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="205,35,171,31,171,26,205,30"/>
+<area shape="rect" id="Node000003" href="$d5/df8/socket_8c.html#a79e296ac36c062348f706fe110a5970d" title=" " alt="" coords="9,55,167,80"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="205,56,167,61,166,55,205,51"/>
+</map>

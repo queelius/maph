@@ -1,0 +1,10 @@
+<map id="maph::open" name="maph::open">
+<area shape="rect" id="Node000001" title=" " alt="" coords="475,38,573,63"/>
+<area shape="poly" id="edge4_Node000001_Node000001" title=" " alt="" coords="559,28,549,20,524,17,503,19,492,23,490,29,496,36,492,39,485,30,489,20,502,14,524,11,551,15,562,24"/>
+<area shape="rect" id="Node000002" href="$d4/db3/classmaph_1_1_fast_maph.html#ac82bcc287db7f7f01699cef292631282" title=" " alt="" coords="240,13,419,38"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="460,45,418,40,419,34,461,40"/>
+<area shape="rect" id="Node000004" href="$df/d9b/classmaph_1_1_hybrid_maph.html#ab1b831668bca035e540a6998a412c200" title=" " alt="" coords="232,62,427,87"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="461,61,427,65,427,60,461,56"/>
+<area shape="rect" id="Node000003" href="$d7/dd1/namespacemaph.html#afcb0be0adacfe37a3efc4e0116184892" title=" " alt="" coords="5,5,184,45"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="226,28,184,28,184,23,226,23"/>
+</map>

@@ -1,0 +1,12 @@
+<map id="maph::MaphBuilder::build" name="maph::MaphBuilder::build">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,22,163,62"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#aeec49f921f8d388c1ceff3d2ec372ee6" title="Create a new database file." alt="" coords="211,29,363,55"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="163,39,197,39,197,45,163,45"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#a3e9e2bde288aba2a98fd09c0a8c13153" title="Close the database and unmap memory." alt="" coords="601,29,747,55"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="363,31,411,27,482,25,553,27,588,30,587,35,553,33,482,30,411,33,363,36"/>
+<area shape="rect" id="Node000004" href="$d1/d87/classmaph_1_1_maph.html#a6e4447f17edf646437bca5b2afea5ab0" title="Open an existing database file." alt="" coords="411,67,553,92"/>
+<area shape="poly" id="edge4_Node000002_Node000004" title=" " alt="" coords="354,52,402,61,401,67,353,57"/>
+<area shape="poly" id="edge3_Node000003_Node000003" title=" " alt="" coords="642,31,636,21,639,11,652,5,674,3,700,6,711,15,708,19,698,11,674,8,654,10,643,15,641,20,647,28"/>
+<area shape="poly" id="edge5_Node000004_Node000003" title=" " alt="" coords="547,64,594,55,595,60,548,69"/>
+<area shape="poly" id="edge6_Node000004_Node000004" title=" " alt="" coords="450,68,444,58,447,48,460,42,482,40,508,44,519,52,516,56,506,48,482,45,462,47,451,52,449,58,455,65"/>
+</map>

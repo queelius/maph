@@ -1,0 +1,10 @@
+Title: maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage
+
+Authors: Alexander Towell
+
+Categories: cs.DB (Primary), cs.DC (Secondary)
+
+Abstract:
+We present maph (Map based on Perfect Hash), a high-performance key-value storage system that achieves sub-microsecond latency through a novel combination of memory-mapped I/O, approximate perfect hashing, and lock-free atomic operations. Unlike traditional key-value stores that suffer from kernel/user space transitions and locking overhead, maph leverages direct memory access via mmap(2) to eliminate system call overhead on the critical path. Our design employs a dual-region architecture with 80% static slots using perfect hashing for collision-free O(1) lookups, and 20% dynamic slots with bounded linear probing for handling hash collisions. Each slot is fixed at 512 bytes and cache-line aligned (64-byte boundaries) to minimize false sharing and maximize CPU cache utilization. Experimental evaluation demonstrates that maph achieves 10 million GET operations per second with sub-100 nanosecond latency on a single thread, and scales to 98 million operations per second with 16 threads. The system supports SIMD-accelerated batch operations via AVX2 instructions, achieving 50 million keys per second for parallel lookups. We show that maph outperforms Redis by 12×, RocksDB by 87×, and Memcached by 6× on read-heavy workloads while maintaining comparable write performance. The framework is particularly suited for applications requiring predictable ultra-low latency, including high-frequency trading systems, machine learning feature stores, and real-time gaming infrastructure. Source code is available at https://github.com/queelius/rd_ph_filter.
+
+Comments: 7 pages, 8 tables, technical report

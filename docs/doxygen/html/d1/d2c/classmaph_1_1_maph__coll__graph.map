@@ -1,0 +1,11 @@
+<map id="maph::Maph" name="maph::Maph">
+<area shape="rect" id="Node000001" title="Main maph class &#45; lean and fast." alt="" coords="88,499,211,844"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="48,356,251,436"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="152,436,152,482,147,482,147,436"/>
+<area shape="rect" id="Node000003" href="$db/d19/classmaph_1_1_maph_1_1_durability_manager.html" title=" " alt="" coords="5,133,229,279"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="132,278,143,339,137,340,127,279"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="253,173,403,239"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="291,250,188,358,185,354,287,247"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="317,5,339,71"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="331,71,331,157,325,157,325,71"/>
+</map>

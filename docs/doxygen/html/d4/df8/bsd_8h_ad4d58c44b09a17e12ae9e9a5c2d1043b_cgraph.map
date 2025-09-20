@@ -1,0 +1,11 @@
+<map id="bsd_create_listen_socket_unix" name="bsd_create_listen_socket_unix">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,31,225,56"/>
+<area shape="rect" id="Node000002" href="$d9/d08/bsd_8c.html#a5f2e700bde7f07d83ea25dac75b34580" title=" " alt="" coords="277,5,412,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="225,29,264,24,264,30,226,34"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#a2ef118ef12071bb6c5e6545ad7a79599" title=" " alt="" coords="273,55,416,80"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="226,52,260,56,259,61,225,57"/>
+<area shape="rect" id="Node000004" href="$d9/d08/bsd_8c.html#a25e6266dc6b5dd494d6eabe05fccfd0c" title=" " alt="" coords="476,29,611,55"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="416,56,462,50,463,55,417,61"/>
+<area shape="rect" id="Node000005" href="$d9/d08/bsd_8c.html#a1509470e32bdec560c66356edecc81c7" title=" " alt="" coords="464,79,623,104"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="417,73,451,77,450,83,416,79"/>
+</map>

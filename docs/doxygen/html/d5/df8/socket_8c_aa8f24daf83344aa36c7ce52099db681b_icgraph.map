@@ -1,0 +1,21 @@
+<map id="us_socket_close" name="us_socket_close">
+<area shape="rect" id="Node000001" title=" " alt="" coords="339,129,465,155"/>
+<area shape="rect" id="Node000002" href="$dc/dfe/echo__server_8c.html#a8ac671134e8de91ab2a8499bf3a55856" title=" " alt="" coords="121,5,277,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="380,121,340,81,316,61,289,44,263,33,265,28,292,40,319,57,344,77,383,117"/>
+<area shape="rect" id="Node000004" href="$dc/dfe/echo__server_8c.html#a7f8818310de4d28adc28e3d4743c1df8" title=" " alt="" coords="108,55,291,80"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="363,126,290,94,254,83,255,78,292,89,365,121"/>
+<area shape="rect" id="Node000005" href="$da/df4/http__server_8c.html#a9a713a7e6ca5501f70e24f183b424553" title=" " alt="" coords="124,104,275,129"/>
+<area shape="poly" id="edge5_Node000001_Node000005" title=" " alt="" coords="325,135,274,129,275,123,325,130"/>
+<area shape="rect" id="Node000007" href="$da/df4/http__server_8c.html#a29d32dc61b54cb4d9a3896708617acf8" title=" " alt="" coords="110,153,289,179"/>
+<area shape="poly" id="edge7_Node000001_Node000007" title=" " alt="" coords="325,154,289,158,289,153,325,148"/>
+<area shape="rect" id="Node000008" href="$d6/db2/loop_8c.html#ad141eddbdc0dc9611d8dc1fde387d794" title=" " alt="" coords="121,203,277,243"/>
+<area shape="poly" id="edge9_Node000001_Node000008" title=" " alt="" coords="363,163,292,194,260,206,259,201,290,189,361,158"/>
+<area shape="rect" id="Node000009" href="$d8/dfa/context_8c.html#a431c92e3d3c27d092546195c56097f28" title=" " alt="" coords="108,268,291,293"/>
+<area shape="poly" id="edge10_Node000001_Node000009" title=" " alt="" coords="386,168,346,214,320,237,292,258,264,270,261,266,289,253,317,233,342,210,382,164"/>
+<area shape="rect" id="Node000003" href="$dc/dfe/echo__server_8c.html#ae66f6b31b5ad750f1fe042a706a4e3d4" title=" " alt="" coords="5,43,60,68"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="129,36,61,52,60,47,128,31"/>
+<area shape="poly" id="edge4_Node000004_Node000003" title=" " alt="" coords="94,62,60,60,60,55,95,57"/>
+<area shape="rect" id="Node000006" href="$da/df4/http__server_8c.html#ae66f6b31b5ad750f1fe042a706a4e3d4" title=" " alt="" coords="5,116,60,141"/>
+<area shape="poly" id="edge6_Node000005_Node000006" title=" " alt="" coords="111,126,60,129,60,124,110,120"/>
+<area shape="poly" id="edge8_Node000007_Node000006" title=" " alt="" coords="128,153,60,137,61,132,129,148"/>
+</map>

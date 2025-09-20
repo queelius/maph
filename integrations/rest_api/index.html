@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>maph - Ultra-Fast Key-Value Store</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9em;
+        }
+        
+        .stat {
+            padding: 5px 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+        
+        .stat-value {
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+            height: calc(100vh - 200px);
+        }
+        
+        .sidebar {
+            background: #111;
+            border-radius: 8px;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .main {
+            background: #111;
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        h2 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        
+        .store-list {
+            list-style: none;
+        }
+        
+        .store-item {
+            padding: 10px;
+            margin-bottom: 5px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .store-item:hover {
+            background: #222;
+            transform: translateX(5px);
+        }
+        
+        .store-item.active {
+            background: linear-gradient(135deg, #667eea20, #764ba220);
+            border-left: 3px solid #667eea;
+        }
+        
+        .store-info {
+            font-size: 0.85em;
+            color: #888;
+        }
+        
+        .store-actions {
+            display: flex;
+            gap: 5px;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-1px);
+        }
+        
+        button.danger {
+            background: #e53e3e;
+        }
+        
+        button.danger:hover {
+            background: #c53030;
+        }
+        
+        button.success {
+            background: #48bb78;
+        }
+        
+        button.success:hover {
+            background: #38a169;
+        }
+        
+        button.small {
+            padding: 4px 8px;
+            font-size: 0.8em;
+        }
+        
+        .create-store {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        input, textarea {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #e0e0e0;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        input {
+            flex: 1;
+        }
+        
+        .kv-editor {
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 15px;
+            height: 100%;
+        }
+        
+        .kv-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .kv-input {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 10px;
+        }
+        
+        .kv-list {
+            background: #0a0a0a;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.9em;
+        }
+        
+        .kv-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            display: grid;
+            grid-template-columns: 250px 1fr auto;
+            gap: 10px;
+            align-items: start;
+        }
+        
+        .kv-key {
+            color: #667eea;
+            word-break: break-all;
+        }
+        
+        .kv-value {
+            color: #48bb78;
+            word-break: break-all;
+        }
+        
+        .perf-meter {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #111;
+            padding: 10px 15px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: flex;
+            gap: 15px;
+            border: 1px solid #333;
+        }
+        
+        .perf-item {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .perf-label {
+            color: #888;
+        }
+        
+        .perf-value {
+            color: #48bb78;
+            font-weight: bold;
+        }
+        
+        .loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #667eea;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .batch-import {
+            margin-top: 15px;
+            padding: 15px;
+            background: #0a0a0a;
+            border-radius: 4px;
+        }
+        
+        .batch-import textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+        }
+        
+        .optimize-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: #888;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .updating {
+            animation: pulse 1s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>maph</h1>
+            <div class="stats">
+                <div class="stat">Latency: <span class="stat-value" id="latency">0</span>µs</div>
+                <div class="stat">Throughput: <span class="stat-value" id="throughput">0</span> ops/s</div>
+                <div class="stat">Memory: <span class="stat-value" id="memory">0</span> MB</div>
+            </div>
+        </header>
+        
+        <div class="grid">
+            <aside class="sidebar">
+                <div class="create-store">
+                    <input type="text" id="store-name" placeholder="Store name">
+                    <input type="number" id="store-size" placeholder="Slots" value="100000">
+                    <button onclick="createStore()">Create</button>
+                </div>
+                
+                <h2>Stores</h2>
+                <ul class="store-list" id="store-list">
+                    <!-- Stores will be listed here -->
+                </ul>
+                
+                <div class="batch-import">
+                    <h3>Batch Import (JSONL)</h3>
+                    <textarea id="batch-data" placeholder='{"input": "key1", "output": "value1"}
+{"input": "key2", "output": "value2"}'></textarea>
+                    <button onclick="batchImport()">Import</button>
+                </div>
+            </aside>
+            
+            <main class="main">
+                <div class="kv-editor" id="kv-editor" style="display: none;">
+                    <div>
+                        <h2 id="current-store-name">Select a store</h2>
+                        <div class="store-info" id="current-store-info"></div>
+                    </div>
+                    
+                    <div class="kv-controls">
+                        <div class="kv-input">
+                            <input type="text" id="key-input" placeholder="Key (JSON)">
+                            <input type="text" id="value-input" placeholder="Value (JSON)">
+                        </div>
+                        <button onclick="setValue()">Set</button>
+                        <button onclick="getValue()">Get</button>
+                        <button class="danger small" onclick="deleteValue()">Delete</button>
+                        <button class="success" onclick="optimizeStore()">Optimize</button>
+                    </div>
+                    
+                    <div class="kv-list" id="kv-list">
+                        <!-- Key-value pairs will be listed here -->
+                    </div>
+                    
+                    <div class="optimize-info">
+                        <strong>Optimize:</strong> Converts dynamic store to perfect hash for O(1) lookups.
+                        All existing keys become perfectly hashed with zero collisions.
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <div class="perf-meter">
+        <div class="perf-item">
+            <span class="perf-label">API:</span>
+            <span class="perf-value" id="api-latency">0ms</span>
+        </div>
+        <div class="perf-item">
+            <span class="perf-label">Requests:</span>
+            <span class="perf-value" id="request-count">0</span>
+        </div>
+    </div>
+    
+    <div class="loading" id="loading">Loading...</div>
+    
+    <script>
+        const API_BASE = `http://${window.location.hostname}:${window.location.port || 8080}`;
+        let currentStore = null;
+        let requestCount = 0;
+        let totalLatency = 0;
+        
+        // Performance monitoring
+        async function timedFetch(url, options = {}) {
+            const start = performance.now();
+            requestCount++;
+            
+            try {
+                const response = await fetch(url, options);
+                const latency = performance.now() - start;
+                totalLatency += latency;
+                
+                document.getElementById('api-latency').textContent = `${latency.toFixed(1)}ms`;
+                document.getElementById('request-count').textContent = requestCount;
+                document.getElementById('latency').textContent = Math.round(latency * 1000);
+                
+                return response;
+            } catch (error) {
+                console.error('Fetch error:', error);
+                throw error;
+            }
+        }
+        
+        // Store management
+        async function loadStores() {
+            const response = await timedFetch(`${API_BASE}/stores`);
+            const stores = await response.json();
+            
+            const list = document.getElementById('store-list');
+            list.innerHTML = '';
+            
+            let totalMemory = 0;
+            stores.forEach(store => {
+                totalMemory += store.memory_mb;
+                
+                const li = document.createElement('li');
+                li.className = 'store-item';
+                if (store.name === currentStore) {
+                    li.classList.add('active');
+                }
+                
+                li.innerHTML = `
+                    <div onclick="selectStore('${store.name}')">
+                        <div>${store.name}</div>
+                        <div class="store-info">
+                            ${store.used}/${store.slots} slots | 
+                            ${(store.load_factor * 100).toFixed(1)}% | 
+                            ${store.memory_mb.toFixed(1)}MB
+                        </div>
+                    </div>
+                    <div class="store-actions">
+                        <button class="danger small" onclick="deleteStore('${store.name}')">×</button>
+                    </div>
+                `;
+                list.appendChild(li);
+            });
+            
+            document.getElementById('memory').textContent = totalMemory.toFixed(1);
+            document.getElementById('throughput').textContent = 
+                Math.round(requestCount / (totalLatency / 1000));
+        }
+        
+        async function createStore() {
+            const name = document.getElementById('store-name').value;
+            const slots = parseInt(document.getElementById('store-size').value) || 100000;
+            
+            if (!name) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, slots })
+            });
+            
+            if (response.ok) {
+                document.getElementById('store-name').value = '';
+                await loadStores();
+                selectStore(name);
+            }
+        }
+        
+        async function deleteStore(name) {
+            if (!confirm(`Delete store "${name}"?`)) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores/${name}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                if (currentStore === name) {
+                    currentStore = null;
+                    document.getElementById('kv-editor').style.display = 'none';
+                }
+                await loadStores();
+            }
+        }
+        
+        async function selectStore(name) {
+            currentStore = name;
+            document.getElementById('kv-editor').style.display = 'block';
+            document.getElementById('current-store-name').textContent = name;
+            
+            // Update active state
+            document.querySelectorAll('.store-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Load store stats
+            const response = await timedFetch(`${API_BASE}/stores/${name}/stats`);
+            const stats = await response.json();
+            
+            document.getElementById('current-store-info').innerHTML = `
+                Slots: ${stats.used_slots}/${stats.total_slots} | 
+                Load: ${(stats.load_factor * 100).toFixed(2)}% | 
+                Generation: ${stats.generation}
+            `;
+            
+            await loadStores();
+            // In a real implementation, we'd load some sample keys here
+        }
+        
+        // Key-value operations
+        async function setValue() {
+            if (!currentStore) return;
+            
+            const key = document.getElementById('key-input').value;
+            const value = document.getElementById('value-input').value;
+            
+            if (!key || !value) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores/${currentStore}/keys/${encodeURIComponent(key)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: value
+            });
+            
+            if (response.ok) {
+                document.getElementById('key-input').value = '';
+                document.getElementById('value-input').value = '';
+                addToKVList(key, value);
+            }
+        }
+        
+        async function getValue() {
+            if (!currentStore) return;
+            
+            const key = document.getElementById('key-input').value;
+            if (!key) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores/${currentStore}/keys/${encodeURIComponent(key)}`, {
+                method: 'GET'
+            });
+            
+            if (response.ok) {
+                const value = await response.text();
+                document.getElementById('value-input').value = value;
+                addToKVList(key, value);
+            } else {
+                alert('Key not found');
+            }
+        }
+        
+        async function deleteValue() {
+            if (!currentStore) return;
+            
+            const key = document.getElementById('key-input').value;
+            if (!key) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores/${currentStore}/keys/${encodeURIComponent(key)}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                document.getElementById('key-input').value = '';
+                document.getElementById('value-input').value = '';
+            }
+        }
+        
+        function addToKVList(key, value) {
+            const list = document.getElementById('kv-list');
+            const item = document.createElement('div');
+            item.className = 'kv-item';
+            item.innerHTML = `
+                <div class="kv-key">${key}</div>
+                <div class="kv-value">${value}</div>
+                <button class="small" onclick="copyToInput('${key.replace(/'/g, "\\'")}', '${value.replace(/'/g, "\\'")}')">Edit</button>
+            `;
+            list.insertBefore(item, list.firstChild);
+            
+            // Keep only last 50 items
+            while (list.children.length > 50) {
+                list.removeChild(list.lastChild);
+            }
+        }
+        
+        function copyToInput(key, value) {
+            document.getElementById('key-input').value = key;
+            document.getElementById('value-input').value = value;
+        }
+        
+        // Batch operations
+        async function batchImport() {
+            if (!currentStore) {
+                alert('Please select a store first');
+                return;
+            }
+            
+            const data = document.getElementById('batch-data').value;
+            if (!data) return;
+            
+            const lines = data.split('\n').filter(line => line.trim());
+            const pairs = [];
+            
+            for (const line of lines) {
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj.input && obj.output) {
+                        pairs.push({ key: obj.input, value: obj.output });
+                    }
+                } catch (e) {
+                    console.error('Invalid JSON line:', line);
+                }
+            }
+            
+            if (pairs.length === 0) return;
+            
+            const response = await timedFetch(`${API_BASE}/stores/${currentStore}/batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operation: 'mset', pairs })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                alert(`Imported ${result.count} items`);
+                document.getElementById('batch-data').value = '';
+                selectStore(currentStore); // Refresh stats
+            }
+        }
+        
+        // Store optimization
+        async function optimizeStore() {
+            if (!currentStore) return;
+            
+            if (!confirm(`Optimize store "${currentStore}"? This will rebuild it with perfect hashing.`)) return;
+            
+            document.getElementById('loading').classList.add('active');
+            
+            const response = await timedFetch(`${API_BASE}/stores/${currentStore}/optimize`, {
+                method: 'POST'
+            });
+            
+            document.getElementById('loading').classList.remove('active');
+            
+            if (response.ok) {
+                alert('Store optimized with perfect hash!');
+                selectStore(currentStore); // Refresh stats
+            }
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'Enter') {
+                    setValue();
+                } else if (e.key === 'g') {
+                    e.preventDefault();
+                    getValue();
+                } else if (e.key === 'd') {
+                    e.preventDefault();
+                    deleteValue();
+                }
+            }
+        });
+        
+        // Initialize
+        loadStores();
+        setInterval(loadStores, 5000); // Refresh every 5 seconds
+    </script>
+</body>
+</html>

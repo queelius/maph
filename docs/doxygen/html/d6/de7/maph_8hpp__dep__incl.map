@@ -1,0 +1,7 @@
+<map id="include/maph.hpp" name="include/maph.hpp">
+<area shape="rect" id="Node000001" title="maph &#45; Memory&#45;mapped Approximate Perfect Hash" alt="" coords="123,5,261,31"/>
+<area shape="rect" id="Node000002" href="$d3/d43/maph__server__simple_8cpp.html" title="Simple REST API server for maph using cpp&#45;httplib." alt="" coords="5,79,195,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="170,42,124,81,120,76,166,38"/>
+<area shape="rect" id="Node000003" href="$d1/d9b/maph__cli_8cpp.html" title="Command&#45;line interface for maph database." alt="" coords="219,86,349,111"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="218,38,272,84,269,88,214,42"/>
+</map>

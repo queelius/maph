@@ -1,0 +1,9 @@
+<map id="bsd_recvmmsg" name="bsd_recvmmsg">
+<area shape="rect" id="Node000001" title=" " alt="" coords="649,5,771,31"/>
+<area shape="rect" id="Node000002" href="$dd/dc4/udp_8c.html#a378b79fc85298728c39297d7d679cb26" title=" " alt="" coords="429,5,601,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="636,21,601,21,601,15,636,15"/>
+<area shape="rect" id="Node000003" href="$dd/dc4/udp_8c.html#afbb1dc24ff7d0d193efc8c748826fba7" title=" " alt="" coords="219,5,381,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="415,21,381,21,381,15,415,15"/>
+<area shape="rect" id="Node000004" href="$dd/dc4/udp_8c.html#adde137517b157692a494c302c4e05df0" title=" " alt="" coords="5,5,171,31"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="205,21,171,21,171,15,205,15"/>
+</map>

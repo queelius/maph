@@ -1,0 +1,13 @@
+<map id="maph::Slot::set" name="maph::Slot::set">
+<area shape="rect" id="Node000001" title="Store a value in this slot." alt="" coords="727,31,847,56"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#adba9599ab404b3ed2e5f32d1720ed383" title="Store a key&#45;value pair." alt="" coords="548,31,679,56"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="713,46,679,46,679,41,713,41"/>
+<area shape="rect" id="Node000003" href="$d3/d43/maph__server__simple_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97" title=" " alt="" coords="5,5,60,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="550,30,500,22,371,13,244,12,60,19,60,13,244,7,371,8,500,17,550,25"/>
+<area shape="rect" id="Node000004" href="$d1/d87/classmaph_1_1_maph.html#aad79c1b103d0dba07f114ce39ee7bb0e" title="Set multiple key&#45;value pairs." alt="" coords="356,31,500,56"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="534,46,501,46,501,41,534,41"/>
+<area shape="rect" id="Node000005" href="$d1/d87/classmaph_1_1_maph.html#a4381dcd25e6328ee2ca7948807b704bf" title=" " alt="" coords="108,31,308,56"/>
+<area shape="poly" id="edge6_Node000002_Node000005" title=" " alt="" coords="554,62,500,71,428,76,356,71,269,59,269,53,356,66,428,71,500,66,553,57"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="342,46,308,46,308,41,342,41"/>
+<area shape="poly" id="edge5_Node000005_Node000003" title=" " alt="" coords="106,31,60,24,60,19,107,26"/>
+</map>

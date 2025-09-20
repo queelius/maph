@@ -1,0 +1,59 @@
+{
+  "paper": {
+    "title": "maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage",
+    "author": "Alexander Towell",
+    "email": "atowell@siue.edu",
+    "affiliation": "Southern Illinois University Edwardsville/Carbondale",
+    "github": "https://github.com/queelius/rd_ph_filter",
+    "version": "1.0",
+    "date_prepared": "2025-09-04"
+  },
+  "venues": [
+    {
+      "name": "arXiv/CoRR",
+      "priority": "HIGHEST",
+      "status": "READY",
+      "folder": "arxiv_2025",
+      "main_file": "maph_arxiv.tex",
+      "submission_url": "https://arxiv.org/submit",
+      "date_submitted": null,
+      "arxiv_id": null,
+      "notes": "Submit immediately for priority date and visibility"
+    },
+    {
+      "name": "USENIX ;login: Magazine",
+      "priority": "MEDIUM",
+      "status": "READY",
+      "folder": "usenix_login_2025",
+      "main_file": "maph_login_article.tex",
+      "submission_email": "login@usenix.org",
+      "date_submitted": null,
+      "response_date": null,
+      "outcome": null,
+      "notes": "Optional - good for practitioner audience"
+    }
+  ],
+  "future_venues": [
+    {
+      "name": "USENIX ATC 2025",
+      "deadline": "2025-01-15",
+      "requirements": "Extend to 12 pages with more evaluation",
+      "status": "PLANNING"
+    },
+    {
+      "name": "VLDB 2025",
+      "deadline": "Rolling (1st of each month)",
+      "requirements": "Database focus, more comparisons",
+      "status": "CONSIDERING"
+    }
+  ],
+  "checklist": {
+    "latex_compilation": true,
+    "pdf_generation": true,
+    "formatting_compliance": true,
+    "bibliography_complete": true,
+    "github_link_working": true,
+    "no_proprietary_info": true
+  },
+  "last_updated": "2025-09-04T14:30:00Z"
+}

@@ -1,0 +1,26 @@
+var searchData=
+[
+  ['s_0',['s',['../db/dde/internal_8h.html#a218e5e05a990a406e80ad2cdc3dd56a0',1,'us_listen_socket_t']]],
+  ['size_1',['size',['../d9/de3/structmaph_1_1_slot.html#a2d59e79fa39e031a70b012673baf395f',1,'maph::Slot::size'],['../d3/d7c/structmaph_1_1_fast_slot.html#a4f3787057f94838ab77190fd4049312d',1,'maph::FastSlot::size'],['../d3/d82/structmaph_1_1_hybrid_slot.html#ab1f1b60c056562fae5f0af5d48c3673b',1,'maph::HybridSlot::size']]],
+  ['slot_5fdata_5fsize_2',['SLOT_DATA_SIZE',['../d7/dd1/namespacemaph.html#af50454ffcf6fa1a020b0f54828334425',1,'maph']]],
+  ['slot_5fsize_3',['slot_size',['../d7/dd1/namespacemaph.html#a2177721246278433cd8d5224deb9618a',1,'maph::Header::slot_size'],['../d7/dd1/namespacemaph.html#ab208a1ac2ec388acf30c7e631368ec9b',1,'maph::SLOT_SIZE']]],
+  ['sni_5ffree_5fcb_4',['sni_free_cb',['../da/db9/sni__tree_8cpp.html#a4079d7dbeaa68fe00ee1e8540a09e6f3',1,'sni_tree.cpp']]],
+  ['sock_5',['sock',['../dd/d1b/structhttplib_1_1_client_impl_1_1_socket.html#ab01017708cb5b420b47d12aa03a699d6',1,'httplib::ClientImpl::Socket']]],
+  ['socket_5f_6',['socket_',['../dd/df9/classhttplib_1_1_client_impl.html#a3c38080a076013321438247bbdc0e29c',1,'httplib::ClientImpl']]],
+  ['socket_5fext_5fsize_7',['socket_ext_size',['../db/dde/internal_8h.html#ad21c294deb365cbc005947f25e098525',1,'us_listen_socket_t']]],
+  ['socket_5fmutex_5f_8',['socket_mutex_',['../dd/df9/classhttplib_1_1_client_impl.html#af16a89e681c3cccc96a499a7a3bcd010',1,'httplib::ClientImpl']]],
+  ['socket_5foptions_5f_9',['socket_options_',['../dd/df9/classhttplib_1_1_client_impl.html#ae67fe9eb4d0e01126921525f2184af4a',1,'httplib::ClientImpl']]],
+  ['socket_5frequests_5fare_5ffrom_5fthread_5f_10',['socket_requests_are_from_thread_',['../dd/df9/classhttplib_1_1_client_impl.html#ab1ab8b437a242078ad41a2fbdbcda3c8',1,'httplib::ClientImpl']]],
+  ['socket_5frequests_5fin_5fflight_5f_11',['socket_requests_in_flight_',['../dd/df9/classhttplib_1_1_client_impl.html#a28371096fe802c65674290c2c2c63356',1,'httplib::ClientImpl']]],
+  ['socket_5fshould_5fbe_5fclosed_5fwhen_5frequest_5fis_5fdone_5f_12',['socket_should_be_closed_when_request_is_done_',['../dd/df9/classhttplib_1_1_client_impl.html#ae8421cb5d2e38a8c39d90ce65af4603e',1,'httplib::ClientImpl']]],
+  ['ssl_13',['ssl',['../dc/dfe/echo__server_8c.html#a880d5471b732f551ff5f9d8482c142dc',1,'SSL:&#160;echo_server.c'],['../da/df4/http__server_8c.html#a880d5471b732f551ff5f9d8482c142dc',1,'SSL:&#160;http_server.c']]],
+  ['ssl_5fciphers_14',['ssl_ciphers',['../d4/dcc/libusockets_8h.html#a7c598eaa02a38fd5aaeb6367db429dc8',1,'us_socket_context_options_t']]],
+  ['ssl_5fdata_15',['ssl_data',['../dd/d24/structus__internal__loop__data__t.html#a10731e4606dd89ff096c8e409d124d05',1,'us_internal_loop_data_t']]],
+  ['ssl_5fprefer_5flow_5fmemory_5fusage_16',['ssl_prefer_low_memory_usage',['../d4/dcc/libusockets_8h.html#a36c49d10c3039966a79d69ac9c2882e5',1,'us_socket_context_options_t']]],
+  ['start_5ftime_5f_17',['start_time_',['../dd/d39/structhttplib_1_1_request.html#ab3de0c920108ed3d3002e58137634854',1,'httplib::Request']]],
+  ['state_18',['state',['../d0/ddc/libuv_8h.html#a4f715825edeb1df28748fe606f212437',1,'us_poll_t']]],
+  ['static_5fslots_19',['static_slots',['../d7/dd1/namespacemaph.html#a90e902c3043275f64e8760e4b8e3d37e',1,'maph::Header::static_slots'],['../d1/d87/classmaph_1_1_maph.html#a54b0ce77ce476f3370c900a740321432',1,'maph::Maph::Stats::static_slots'],['../df/d9b/classmaph_1_1_hybrid_maph.html#a2fedf13c6da127fb00216bbde7175ae7',1,'maph::HybridMaph::Stats::static_slots']]],
+  ['status_20',['status',['../d5/d4e/structhttplib_1_1_response.html#a8b717024fa31c5146e9e7a46761a0653',1,'httplib::Response']]],
+  ['svr_5fsock_5f_21',['svr_sock_',['../d5/d65/classhttplib_1_1_server.html#a8bc06c5e7e93632a22db8fd35f68b4a1',1,'httplib::Server']]],
+  ['sweep_5ftimer_22',['sweep_timer',['../dd/d24/structus__internal__loop__data__t.html#a827206e986fdd8c12076012cdd546194',1,'us_internal_loop_data_t']]]
+];

@@ -1,0 +1,7 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="Node000000" href="$d7/d44/classhttplib_1_1detail_1_1_matcher_base.html" title=" " alt="" coords="5,42,208,67"/>
+<area shape="rect" id="Node000001" href="$d6/d6d/classhttplib_1_1detail_1_1_path_params_matcher.html" title="Captures parameters in request path and stores them in Request::path_params." alt="" coords="265,5,458,45"/>
+<area shape="poly" id="edge1_Node000000_Node000001" title=" " alt="" coords="222,39,264,34,265,39,222,44"/>
+<area shape="rect" id="Node000002" href="$dd/d35/classhttplib_1_1detail_1_1_regex_matcher.html" title="Performs std::regex_match on request path and stores the result in Request::matches." alt="" coords="256,70,467,95"/>
+<area shape="poly" id="edge2_Node000000_Node000002" title=" " alt="" coords="222,65,256,68,256,74,221,70"/>
+</map>

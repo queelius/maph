@@ -1,0 +1,16 @@
+<map id="maph::Maph::parallel_mget" name="maph::Maph::parallel_mget">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,25,207,50"/>
+<area shape="rect" id="Node000002" href="$d8/d22/structmaph_1_1_hash.html#a20173fa281b298925c9f5b881c0af338" title="Compute hash and slot index for a key." alt="" coords="628,25,793,50"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="167,22,254,10,346,4,417,3,580,16,618,20,617,26,580,22,417,9,346,9,255,15,168,28"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#afc223233ec9a3bbb0e9c87c26b07aac5" title="Get value for a key." alt="" coords="448,76,580,101"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="180,48,255,59,435,79,434,84,254,64,179,53"/>
+<area shape="rect" id="Node000006" href="$d1/d87/classmaph_1_1_maph.html#af89b86e7f1a1579a931f792f72bf7bd7" title="Get multiple keys in a single operation." alt="" coords="255,25,400,50"/>
+<area shape="poly" id="edge6_Node000001_Node000006" title=" " alt="" coords="207,35,241,35,241,40,207,40"/>
+<area shape="poly" id="edge3_Node000003_Node000002" title=" " alt="" coords="564,73,647,51,648,56,565,78"/>
+<area shape="rect" id="Node000004" href="$d9/de3/structmaph_1_1_slot.html#a3552c3ba3647f62c68d1ba4620c32278" title="Check if slot is empty." alt="" coords="639,74,782,100"/>
+<area shape="poly" id="edge4_Node000003_Node000004" title=" " alt="" coords="580,85,625,85,625,90,580,91"/>
+<area shape="rect" id="Node000005" href="$d9/de3/structmaph_1_1_slot.html#a710177a540a978642d400b03f49cdfaa" title="Get a string_view of the stored value." alt="" coords="645,124,776,149"/>
+<area shape="poly" id="edge5_Node000003_Node000005" title=" " alt="" coords="567,98,645,118,644,123,566,104"/>
+<area shape="poly" id="edge7_Node000006_Node000002" title=" " alt="" coords="400,35,614,35,614,40,400,40"/>
+<area shape="poly" id="edge8_Node000006_Node000003" title=" " alt="" coords="376,48,454,69,453,75,374,53"/>
+</map>

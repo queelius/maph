@@ -1,0 +1,11 @@
+<map id="maph::Maph::mset" name="maph::Maph::mset">
+<area shape="rect" id="Node000001" title="Set multiple key&#45;value pairs." alt="" coords="5,55,149,80"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#adba9599ab404b3ed2e5f32d1720ed383" title="Store a key&#45;value pair." alt="" coords="197,55,328,80"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="150,65,184,65,184,70,150,70"/>
+<area shape="rect" id="Node000003" href="$d8/d22/structmaph_1_1_hash.html#a20173fa281b298925c9f5b881c0af338" title="Compute hash and slot index for a key." alt="" coords="376,5,541,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="313,52,393,32,395,37,314,57"/>
+<area shape="rect" id="Node000004" href="$d9/de3/structmaph_1_1_slot.html#a3552c3ba3647f62c68d1ba4620c32278" title="Check if slot is empty." alt="" coords="387,55,530,80"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="328,65,374,65,374,70,328,70"/>
+<area shape="rect" id="Node000005" href="$d9/de3/structmaph_1_1_slot.html#afe62992a86357d1aa2a8fb974b72fd88" title="Store a value in this slot." alt="" coords="399,104,519,129"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="314,77,395,98,393,103,313,83"/>
+</map>

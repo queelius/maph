@@ -1,0 +1,18 @@
+<map id="maph::Maph::open" name="maph::Maph::open">
+<area shape="rect" id="Node000001" title="Open an existing database file." alt="" coords="568,70,711,95"/>
+<area shape="poly" id="edge7_Node000001_Node000001" title=" " alt="" coords="679,60,668,52,639,49,616,51,603,56,601,61,607,68,603,72,595,62,599,52,614,46,639,43,670,47,682,56"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#a0682c54b3184327d11d1b3aec980871a" title=" " alt="" coords="341,21,493,46"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="568,70,475,49,476,43,569,64"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#aeec49f921f8d388c1ceff3d2ec372ee6" title="Create a new database file." alt="" coords="341,70,493,95"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="554,85,494,85,494,80,554,80"/>
+<area shape="rect" id="Node000008" href="$d8/ddc/class_store_registry.html#a795933abf6e12758acd012ed54a83060" title=" " alt="" coords="315,119,520,145"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="569,101,476,122,475,117,568,96"/>
+<area shape="rect" id="Node000004" href="$dd/d54/classmaph_1_1_maph_builder.html#aad8a187ec50b385964c7d0c1dced65df" title=" " alt="" coords="109,5,266,45"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="351,69,314,60,266,48,267,43,315,55,352,64"/>
+<area shape="rect" id="Node000005" href="$d8/ddc/class_store_registry.html#a4503b7211c2251d69314c34d3f56c104" title=" " alt="" coords="108,70,267,95"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="327,85,267,85,267,80,327,80"/>
+<area shape="rect" id="Node000007" href="$d7/dd1/namespacemaph.html#ab512df5f392878ff40e53734b5cc042d" title=" " alt="" coords="133,119,241,145"/>
+<area shape="poly" id="edge6_Node000003_Node000007" title=" " alt="" coords="345,101,242,123,241,118,344,96"/>
+<area shape="rect" id="Node000006" href="$d3/d43/maph__server__simple_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97" title=" " alt="" coords="5,70,60,95"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="94,85,60,85,60,80,94,80"/>
+</map>

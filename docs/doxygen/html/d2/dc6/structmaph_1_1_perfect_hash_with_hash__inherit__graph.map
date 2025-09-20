@@ -1,0 +1,5 @@
+<map id="maph::PerfectHashWithHash&lt; Key &gt;" name="maph::PerfectHashWithHash&lt; Key &gt;">
+<area shape="rect" id="Node000001" title="Perfect hash that RETURNS BOTH hash and index This way we compute hash once and reuse it." alt="" coords="5,5,207,85"/>
+<area shape="rect" id="Node000002" href="$d2/d23/structmaph_1_1_perfect_hash_with_hash.html" title=" " alt="" coords="5,148,207,228"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="109,99,109,148,103,148,103,99"/>
+</map>

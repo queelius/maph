@@ -1,0 +1,19 @@
+<map id="us_internal_loop_data_t" name="us_internal_loop_data_t">
+<area shape="rect" id="Node000001" title=" " alt="" coords="147,5,317,231"/>
+<area shape="rect" id="Node000003" href="$d0/ddc/libuv_8h.html#db/d76/structus__loop__t" title=" " alt="" coords="35,293,184,559"/>
+<area shape="poly" id="edge3_Node000003_Node000001" title=" " alt="" coords="181,232,170,256,161,279,156,277,166,254,176,230"/>
+<area shape="rect" id="Node000002" href="$dc/d0f/structus__socket__context__t.html" title=" " alt="" coords="36,676,183,801"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="144,675,171,619,193,558,211,479,222,398,231,247,237,247,227,398,216,480,199,559,176,621,149,677"/>
+<area shape="poly" id="edge10_Node000002_Node000002" title=" " alt="" coords="184,711,202,720,209,738,207,750,200,759,196,756,202,748,204,739,198,724,182,716"/>
+<area shape="rect" id="Node000004" href="$db/dde/internal_8h.html#d6/df9/structus__socket__t" title=" " alt="" coords="222,1065,346,1171"/>
+<area shape="poly" id="edge6_Node000004_Node000002" title=" " alt="" coords="99,802,88,867,80,937,80,999,85,1023,93,1040,104,1051,116,1057,141,1058,170,1056,203,1063,208,1065,206,1070,202,1068,170,1062,141,1064,114,1062,101,1055,89,1043,80,1025,75,1000,74,937,82,866,93,801"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="112,559,112,659,107,659,107,559"/>
+<area shape="poly" id="edge11_Node000001_Node000004" title=" " alt="" coords="315,1064,324,1041,333,993,332,954,324,865,324,704,326,577,320,452,311,379,295,294,282,247,287,246,300,293,316,379,326,452,332,577,329,704,329,865,338,954,338,993,329,1042,320,1066"/>
+<area shape="poly" id="edge4_Node000002_Node000004" title=" " alt="" coords="220,1078,203,1062,190,1043,178,1018,171,996,167,956,167,916,159,866,142,817,147,816,164,865,173,915,173,956,176,995,183,1016,194,1040,207,1058,224,1074"/>
+<area shape="poly" id="edge7_Node000004_Node000004" title=" " alt="" coords="347,1100,365,1106,373,1118,370,1126,364,1131,360,1127,366,1123,367,1118,362,1110,346,1105"/>
+<area shape="rect" id="Node000006" href="$db/dde/internal_8h.html#d4/d1d/structus__listen__socket__t" title=" " alt="" coords="5,1233,139,1299"/>
+<area shape="poly" id="edge9_Node000006_Node000004" title=" " alt="" coords="223,1164,133,1226,130,1222,220,1160"/>
+<area shape="rect" id="Node000005" href="$d0/ddc/libuv_8h.html#d7/d87/structus__poll__t" title=" " alt="" coords="383,636,489,841"/>
+<area shape="poly" id="edge5_Node000004_Node000005" title=" " alt="" coords="429,842,408,942,390,994,366,1043,359,1054,354,1051,362,1040,385,992,403,941,424,841"/>
+<area shape="poly" id="edge8_Node000002_Node000006" title=" " alt="" coords="66,1234,60,1166,56,1075,57,970,68,865,79,817,85,818,73,866,62,971,61,1075,65,1166,71,1233"/>
+</map>

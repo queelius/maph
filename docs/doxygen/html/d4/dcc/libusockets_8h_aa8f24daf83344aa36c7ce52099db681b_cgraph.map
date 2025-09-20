@@ -1,0 +1,13 @@
+<map id="us_socket_close" name="us_socket_close">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,120,132,145"/>
+<area shape="rect" id="Node000002" href="$d9/d08/bsd_8c.html#a5f2e700bde7f07d83ea25dac75b34580" title=" " alt="" coords="200,5,335,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="81,118,122,80,179,41,197,33,199,38,181,46,125,84,84,122"/>
+<area shape="rect" id="Node000003" href="$d8/dfa/context_8c.html#a9e75e5845366d081386aba6b2a18f6ea" title=" " alt="" coords="180,55,355,95"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="113,117,184,97,185,102,114,123"/>
+<area shape="rect" id="Node000004" href="$d4/dcc/libusockets_8h.html#a442b8a40f50d68abe9877c51a615ce7d" title=" " alt="" coords="223,120,311,145"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="132,130,210,130,210,135,132,135"/>
+<area shape="rect" id="Node000005" href="$d4/dcc/libusockets_8h.html#a63b06627a45548bf0f159ceecef8acd7" title=" " alt="" coords="216,169,319,195"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="121,143,203,163,202,169,120,148"/>
+<area shape="rect" id="Node000006" href="$d5/df8/socket_8c.html#af3bcc9962a47591755f47cc03d018247" title=" " alt="" coords="191,219,344,244"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="87,143,129,173,181,204,202,212,200,217,179,208,126,178,84,148"/>
+</map>

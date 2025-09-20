@@ -1,0 +1,21 @@
+<map id="us_socket_context_connect_unix" name="us_socket_context_connect_unix">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,177,240,203"/>
+<area shape="rect" id="Node000002" href="$d9/d08/bsd_8c.html#a2594eecbc088ade1a395468ac71d4109" title=" " alt="" coords="298,23,449,63"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="138,175,201,127,287,73,300,66,303,71,289,78,204,132,141,179"/>
+<area shape="rect" id="Node000006" href="$d4/dcc/libusockets_8h.html#a31111fdc90f9fe4546af414638048694" title=" " alt="" coords="315,88,431,113"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="154,175,287,123,314,115,315,120,289,129,156,180"/>
+<area shape="rect" id="Node000007" href="$d8/dfa/context_8c.html#af13ec2802d4e79fcb75c5f6d83653d59" title=" " alt="" coords="294,138,453,178"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="222,175,280,167,280,172,223,180"/>
+<area shape="rect" id="Node000008" href="$db/dde/internal_8h.html#a54ea4efec259cfbb759a69ccd22d853b" title=" " alt="" coords="288,202,459,242"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="223,200,275,207,274,212,222,205"/>
+<area shape="rect" id="Node000009" href="$d4/dcc/libusockets_8h.html#a220d7dfe6c50d4ef1f0ed594e6f932ed" title=" " alt="" coords="325,267,421,292"/>
+<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="156,200,289,251,315,260,314,265,287,257,154,205"/>
+<area shape="rect" id="Node000010" href="$d4/dcc/libusockets_8h.html#ada8af05a36d8ecce840b18e77036353f" title=" " alt="" coords="321,316,426,341"/>
+<area shape="poly" id="edge9_Node000001_Node000010" title=" " alt="" coords="141,201,203,249,245,277,289,301,309,309,306,314,287,306,242,281,200,253,138,205"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#a2ef118ef12071bb6c5e6545ad7a79599" title=" " alt="" coords="507,31,649,56"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="449,41,493,41,493,46,449,46"/>
+<area shape="rect" id="Node000004" href="$d9/d08/bsd_8c.html#a25e6266dc6b5dd494d6eabe05fccfd0c" title=" " alt="" coords="709,5,844,31"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="649,32,695,26,696,31,650,37"/>
+<area shape="rect" id="Node000005" href="$d9/d08/bsd_8c.html#a1509470e32bdec560c66356edecc81c7" title=" " alt="" coords="697,55,856,80"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="650,49,684,53,684,59,649,55"/>
+</map>

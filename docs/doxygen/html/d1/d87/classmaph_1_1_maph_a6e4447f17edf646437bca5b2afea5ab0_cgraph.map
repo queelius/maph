@@ -1,0 +1,7 @@
+<map id="maph::Maph::open" name="maph::Maph::open">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,29,148,55"/>
+<area shape="poly" id="edge3_Node000001_Node000001" title=" " alt="" coords="45,31,38,21,42,11,55,5,77,3,103,6,114,15,111,19,101,11,77,8,56,10,46,15,43,20,49,28"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#a3e9e2bde288aba2a98fd09c0a8c13153" title="Close the database and unmap memory." alt="" coords="196,29,341,55"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="149,39,182,39,182,45,149,45"/>
+<area shape="poly" id="edge2_Node000002_Node000002" title=" " alt="" coords="237,31,230,21,234,11,247,5,269,3,295,6,306,15,303,19,293,11,269,8,248,10,238,15,235,20,241,28"/>
+</map>

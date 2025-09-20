@@ -1,0 +1,28 @@
+var searchData=
+[
+  ['v0_209_200_20v1_200_200_201_200_200_20a_202024_2001_2015_0',['&lt;a href=&quot;https://github.com/yourusername/maph/compare/v0.9.0...v1.0.0&quot; &gt;1.0.0&lt;/a&gt; - 2024-01-15',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md359',1,'']]],
+  ['v1_200_200_201_200_200_20a_202024_2001_2015_1',['&lt;a href=&quot;https://github.com/yourusername/maph/compare/v0.9.0...v1.0.0&quot; &gt;1.0.0&lt;/a&gt; - 2024-01-15',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md359',1,'']]],
+  ['v1_200_200_20head_2',['&lt;a href=&quot;https://github.com/yourusername/maph/compare/v1.0.0...HEAD&quot;',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md355',1,'']]],
+  ['value_3',['value',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md197',1,'get - Retrieve a value'],['..//home/spinoza/github/repos/rd_ph_filter/integrations/rest_api/README.md#autotoc_md90',1,'Get value'],['..//home/spinoza/github/repos/rd_ph_filter/integrations/rest_api/README.md#autotoc_md91',1,'Set value'],['../d3/d82/structmaph_1_1_hybrid_slot.html#ae56d4661fa465d26fd11a087c626694c',1,'maph::HybridSlot::value'],['../d3/d7c/structmaph_1_1_fast_slot.html#a38fac549cfb090aa6c45298797f47544',1,'maph::FastSlot::value'],['../da/de1/classhttplib_1_1_result.html#a548bafc2cbdf35eba042e18378921819',1,'httplib::Result::value()'],['../d3/dea/class_simple_j_s_o_n.html#a2872b496fde0436ef3738bdc5a6d02b5',1,'SimpleJSON::value(const std::string &amp;v)'],['../d3/dea/class_simple_j_s_o_n.html#a671d7854076ceab0b9d5db9137f5b1a5',1,'SimpleJSON::value(int64_t v)'],['../d3/dea/class_simple_j_s_o_n.html#a552835de5dc243d4bb0acc376f6b7f5b',1,'SimpleJSON::value(double v)'],['../da/de1/classhttplib_1_1_result.html#a2f30c102a3e635beb7863113d9000b5b',1,'httplib::Result::value()'],['../d3/dea/class_simple_j_s_o_n.html#a48381be2a21f47a948032b520226ccc8',1,'SimpleJSON::value()']]],
+  ['value_20management_4',['Value Management',['../de/d23/md_docs_2_u_s_e_r___g_u_i_d_e.html#autotoc_md291',1,'']]],
+  ['value_20operations_5',['value operations',['../d3/d1d/md_integrations_2rest__api_2_a_p_i.html#autotoc_md24',1,'Key-Value Operations'],['..//home/spinoza/github/repos/rd_ph_filter/integrations/rest_api/README.md#autotoc_md89',1,'Key-Value Operations']]],
+  ['value_20pair_6',['set - Store a key-value pair',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md196',1,'']]],
+  ['value_20pairs_7',['mset - Set multiple key-value pairs',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md204',1,'']]],
+  ['value_20too_20large_8',['Value Too Large',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md222',1,'']]],
+  ['value_5ftoo_5flarge_9',['VALUE_TOO_LARGE',['../d7/dd1/namespacemaph.html#a42c98e18c15db542b2ee7d5f68ad6133a5638207b2d69d6225d1b4c0046ac16f8',1,'maph']]],
+  ['variables_10',['Environment Variables',['../d3/d1d/md_integrations_2rest__api_2_a_p_i.html#autotoc_md65',1,'']]],
+  ['variantalsonegotiates_5f506_11',['VariantAlsoNegotiates_506',['../d8/da7/namespacehttplib.html#ade1f5845ce6b8d8fdb3a56676db48fbaa596882a1e490167081cb4b6abd303550',1,'httplib']]],
+  ['verbose_12',['&amp;ndash;verbose',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md209',1,'']]],
+  ['verify_20database_20integrity_13',['Verify Database Integrity',['../d8/d91/md_docs_2_c_l_i.html#autotoc_md233',1,'']]],
+  ['version_14',['version',['../d9/de3/structmaph_1_1_slot.html#aaa8cb39e654709697bb3f625d0426481',1,'maph::Slot::version'],['../d9/de3/structmaph_1_1_slot.html#a123025bd8ce154e956b1ab0baf4fcb78',1,'maph::Slot::version() const'],['../d5/d4e/structhttplib_1_1_response.html#a56b71785ec6f10347a30eee0dc23d96c',1,'httplib::Response::version'],['../dd/d39/structhttplib_1_1_request.html#aa3edfd554b749bf2cb03a57a12c24602',1,'httplib::Request::version'],['../d7/dd1/namespacemaph.html#aa31d5a0f8e982e02dbd2c2172d03ccac',1,'maph::HybridHeader::version'],['../d3/d82/structmaph_1_1_hybrid_slot.html#ae348fb4fb1f9c4c45880d250385a9d3d',1,'maph::HybridSlot::version'],['../d7/dd1/namespacemaph.html#adaf1282bdeaffa6dd37c9d6a97a884ff',1,'maph::Header::version']]],
+  ['version_201_201_200_20q2_202024_15',['Version 1.1.0 (Q2 2024)',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md383',1,'']]],
+  ['version_201_202_200_20q3_202024_16',['Version 1.2.0 (Q3 2024)',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md384',1,'']]],
+  ['version_202_200_200_20q4_202024_17',['Version 2.0.0 (Q4 2024)',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md385',1,'']]],
+  ['version_5fmismatch_18',['VERSION_MISMATCH',['../d7/dd1/namespacemaph.html#a42c98e18c15db542b2ee7d5f68ad6133a94f58f39fbe930b311f80bb571faa31e',1,'maph']]],
+  ['very_20expensive_20resource_20timers_19',['us_timer_t - High cost (very expensive resource) timers',['../d5/d6a/md_integrations_2rest__api_2__deps_2usockets-src_2misc_2manual.html#autotoc_md7',1,'']]],
+  ['view_20',['view',['../d9/de3/structmaph_1_1_slot.html#a710177a540a978642d400b03f49cdfaa',1,'maph::Slot']]],
+  ['vs_20individual_20operations_21',['Batch vs Individual Operations',['../d3/d1d/md_integrations_2rest__api_2_a_p_i.html#autotoc_md52',1,'']]],
+  ['vs_20memcached_22',['vs memcached',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md378',1,'']]],
+  ['vs_20redis_23',['vs Redis',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md377',1,'']]],
+  ['vs_20rocksdb_24',['vs RocksDB',['../d1/d5b/md__c_h_a_n_g_e_l_o_g.html#autotoc_md379',1,'']]]
+];

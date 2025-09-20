@@ -1,0 +1,33 @@
+<map id="maph::Slot::empty" name="maph::Slot::empty">
+<area shape="rect" id="Node000001" title="Check if slot is empty." alt="" coords="801,259,944,284"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#afc223233ec9a3bbb0e9c87c26b07aac5" title="Get value for a key." alt="" coords="589,132,721,157"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="839,253,752,199,680,160,682,155,755,194,842,249"/>
+<area shape="rect" id="Node000008" href="$d1/d87/classmaph_1_1_maph.html#ac4de3d1af5ab6f1e729d646a9f7ce1bd" title=" " alt="" coords="556,208,753,233"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="803,258,709,236,711,231,805,253"/>
+<area shape="rect" id="Node000009" href="$d1/d87/classmaph_1_1_maph.html#a2a1bd098d07dcc5cef9ea0137742126f" title="Remove a key&#45;value pair." alt="" coords="128,259,289,284"/>
+<area shape="poly" id="edge9_Node000001_Node000009" title=" " alt="" coords="788,274,290,274,290,269,788,269"/>
+<area shape="rect" id="Node000010" href="$d1/d87/classmaph_1_1_maph.html#ae3f40ce35f8a59fa2f5a8059f602599e" title="Scan all key&#45;value pairs in the database." alt="" coords="138,309,279,335"/>
+<area shape="poly" id="edge11_Node000001_Node000010" title=" " alt="" coords="788,280,280,319,279,314,787,275"/>
+<area shape="rect" id="Node000011" href="$d1/d87/classmaph_1_1_maph.html#adba9599ab404b3ed2e5f32d1720ed383" title="Store a key&#45;value pair." alt="" coords="589,385,720,411"/>
+<area shape="poly" id="edge13_Node000001_Node000011" title=" " alt="" coords="839,293,679,387,677,383,837,289"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#a978b07cf927266378e68748e2e98aa30" title="Check if a key exists." alt="" coords="357,5,508,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="623,126,570,90,507,52,465,33,468,28,509,48,573,85,626,121"/>
+<area shape="rect" id="Node000004" href="$d3/d43/maph__server__simple_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97" title=" " alt="" coords="5,309,60,335"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="611,129,512,94,449,78,380,66,308,62,237,68,203,75,170,87,139,102,110,121,89,141,73,165,51,219,40,271,37,309,32,309,35,270,46,218,68,163,85,138,106,117,136,97,168,82,202,70,237,62,308,56,380,61,450,73,514,89,613,124"/>
+<area shape="rect" id="Node000005" href="$d1/d87/classmaph_1_1_maph.html#af89b86e7f1a1579a931f792f72bf7bd7" title="Get multiple keys in a single operation." alt="" coords="360,107,505,132"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="574,138,505,130,506,125,575,133"/>
+<area shape="rect" id="Node000006" href="$d1/d87/classmaph_1_1_maph.html#a3f0d5be96a66024a6df136cb115f539b" title=" " alt="" coords="108,132,309,157"/>
+<area shape="poly" id="edge7_Node000002_Node000006" title=" " alt="" coords="575,147,310,147,310,142,575,142"/>
+<area shape="rect" id="Node000007" href="$d1/d87/classmaph_1_1_maph.html#a5d44d9f1ac62c1de4e0677aa37f4ecb7" title=" " alt="" coords="360,208,505,233"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="604,164,472,210,470,205,603,159"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="346,132,310,136,309,131,346,126"/>
+<area shape="poly" id="edge10_Node000009_Node000004" title=" " alt="" coords="145,290,109,301,61,316,59,311,107,295,144,285"/>
+<area shape="poly" id="edge12_Node000010_Node000004" title=" " alt="" coords="124,325,60,325,60,319,124,319"/>
+<area shape="poly" id="edge14_Node000011_Node000004" title=" " alt="" coords="575,399,363,387,235,372,107,350,60,335,61,330,109,345,236,367,363,381,576,394"/>
+<area shape="rect" id="Node000012" href="$d1/d87/classmaph_1_1_maph.html#aad79c1b103d0dba07f114ce39ee7bb0e" title="Set multiple key&#45;value pairs." alt="" coords="361,411,505,436"/>
+<area shape="poly" id="edge15_Node000011_Node000012" title=" " alt="" coords="576,410,505,418,505,412,576,404"/>
+<area shape="rect" id="Node000013" href="$d1/d87/classmaph_1_1_maph.html#a4381dcd25e6328ee2ca7948807b704bf" title=" " alt="" coords="109,411,309,436"/>
+<area shape="poly" id="edge18_Node000011_Node000013" title=" " alt="" coords="614,419,565,437,508,451,443,457,377,455,315,448,264,439,265,433,316,443,377,450,443,452,508,446,563,432,612,414"/>
+<area shape="poly" id="edge16_Node000012_Node000013" title=" " alt="" coords="346,426,309,426,309,421,346,421"/>
+<area shape="poly" id="edge17_Node000013_Node000004" title=" " alt="" coords="139,409,107,394,70,365,43,337,47,333,73,361,109,389,141,404"/>
+</map>

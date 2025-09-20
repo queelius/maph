@@ -1,0 +1,15 @@
+<map id="on_http_socket_timeout" name="on_http_socket_timeout">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,120,184,145"/>
+<area shape="rect" id="Node000002" href="$d5/df8/socket_8c.html#aa8f24daf83344aa36c7ce52099db681b" title=" " alt="" coords="232,120,359,145"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="185,130,218,130,218,135,185,135"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#a5f2e700bde7f07d83ea25dac75b34580" title=" " alt="" coords="427,5,561,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="307,118,348,80,405,41,423,33,426,38,408,46,352,84,311,122"/>
+<area shape="rect" id="Node000004" href="$d8/dfa/context_8c.html#a9e75e5845366d081386aba6b2a18f6ea" title=" " alt="" coords="407,55,581,95"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="339,117,411,97,412,102,341,123"/>
+<area shape="rect" id="Node000005" href="$d4/dcc/libusockets_8h.html#a442b8a40f50d68abe9877c51a615ce7d" title=" " alt="" coords="450,120,538,145"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="359,130,436,130,436,135,359,135"/>
+<area shape="rect" id="Node000006" href="$d4/dcc/libusockets_8h.html#a63b06627a45548bf0f159ceecef8acd7" title=" " alt="" coords="443,169,545,195"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="348,143,430,163,429,169,346,148"/>
+<area shape="rect" id="Node000007" href="$d5/df8/socket_8c.html#af3bcc9962a47591755f47cc03d018247" title=" " alt="" coords="417,219,571,244"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="314,143,355,173,408,204,428,212,426,217,405,208,352,178,311,148"/>
+</map>

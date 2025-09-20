@@ -1,38 +1,137 @@
-/build* 
-/.vscode
-.clang-format
-# ignore all . files and . folders. note: .*/ ignores only .folders
-.*
-# except do not ignore .gitignore. note: may omit if .gitignore is explicitly
-# tracked
-!/.gitignore
+# Build directories
+build/
+build_test/
+cmake-build-*/
+out/
+.build/
+*/_deps/
 
-/build* 
-main.pdf
-*.log
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+Testing/
+*.cmake
+
+# Compiled binaries
+*.exe
 *.out
-*.fls
-*.idx
-*.pyg
-*.fdb_latexmk
-*.aux
-*.bbl
-*.ind
-*.nlo
+*.app
+maph_cli
+maph_daemon
+maph_rest_server
+test_maph
+bench_maph
+speed_demo_optimized
+test_dual_mode
+
+# Libraries
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# Object files
+*.o
+*.obj
+*.lo
 *.slo
-/_minted*
-main.synctex.gz
-*.blg
-*.ilg
-*.toc
-*.lof
-*.lot
-*.acn
-*.acr
-*.alg
-*.glg
-*.glo
-*.gls
-*.ist
-*.xdy
-.Rproj.user
+
+# Precompiled headers
+*.gch
+*.pch
+*.pch.d
+
+# Coverage files
+*.gcda
+*.gcno
+*.gcov
+coverage.info
+coverage/
+*.profraw
+*.profdata
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-*
+.clangd
+.cache/
+compile_commands.json
+
+# Documentation
+docs/html/
+docs/latex/
+*.doxygen
+
+# Test artifacts
+*.maph
+test_*.maph
+*.log
+server.log
+*.tmp
+*.journal
+DartConfiguration.tcl
+
+# Data directories
+maph_stores/
+data/
+temp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+*.whl
+.pytest_cache/
+
+# Dependencies
+deps/
+third_party/
+vendor/
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# Performance profiling
+perf.data
+perf.data.old
+*.perf
+callgrind.out.*
+
+# Package files
+*.tar.gz
+*.zip
+*.7z
+*.deb
+*.rpm
+
+# JSON test files
+*.jsonl
+test_import.jsonl
+test_export.jsonl
+
+# HTTP library (downloaded)
+httplib.h
+
+# Local configuration
+.env
+.env.local
+config.local.*

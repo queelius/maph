@@ -1,0 +1,35 @@
+<map id="on_http_socket_end" name="on_http_socket_end">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,244,156,269"/>
+<area shape="rect" id="Node000002" href="$d5/df8/socket_8c.html#aa8f24daf83344aa36c7ce52099db681b" title=" " alt="" coords="219,145,345,171"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="106,242,241,175,244,179,109,246"/>
+<area shape="rect" id="Node000008" href="$d5/df8/socket_8c.html#a947979c60a08faefd6f86e0253210078" title=" " alt="" coords="204,317,360,343"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="118,267,234,310,233,315,116,272"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#a5f2e700bde7f07d83ea25dac75b34580" title=" " alt="" coords="435,5,569,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="292,143,338,94,370,65,407,41,424,33,426,38,409,46,374,70,341,98,296,147"/>
+<area shape="rect" id="Node000004" href="$d8/dfa/context_8c.html#a9e75e5845366d081386aba6b2a18f6ea" title=" " alt="" coords="415,55,589,95"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="312,143,407,105,427,97,429,102,409,110,314,148"/>
+<area shape="rect" id="Node000005" href="$d4/dcc/libusockets_8h.html#a442b8a40f50d68abe9877c51a615ce7d" title=" " alt="" coords="458,219,546,244"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="315,168,409,203,446,215,444,220,407,209,313,173"/>
+<area shape="rect" id="Node000006" href="$d4/dcc/libusockets_8h.html#a63b06627a45548bf0f159ceecef8acd7" title=" " alt="" coords="451,120,553,145"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="345,148,437,137,437,143,346,153"/>
+<area shape="rect" id="Node000007" href="$d5/df8/socket_8c.html#af3bcc9962a47591755f47cc03d018247" title=" " alt="" coords="425,169,579,195"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="346,162,412,170,411,175,345,168"/>
+<area shape="poly" id="edge13_Node000008_Node000005" title=" " alt="" coords="300,315,347,284,407,253,444,241,446,246,409,258,349,289,303,319"/>
+<area shape="poly" id="edge14_Node000008_Node000007" title=" " alt="" coords="290,316,336,261,369,230,407,204,420,197,422,202,409,208,372,234,340,265,294,319"/>
+<area shape="rect" id="Node000009" href="$d9/d08/bsd_8c.html#ab44b2f6f8adf780e7d94752b60bddbf2" title=" " alt="" coords="420,416,584,441"/>
+<area shape="poly" id="edge8_Node000008_Node000009" title=" " alt="" coords="303,341,349,371,409,402,429,409,427,414,407,407,347,376,300,345"/>
+<area shape="rect" id="Node000010" href="$db/dde/internal_8h.html#a12179e4025ddf4665d888a6c6d292afe" title=" " alt="" coords="408,465,596,491"/>
+<area shape="poly" id="edge9_Node000008_Node000010" title=" " alt="" coords="294,341,340,395,372,426,409,452,422,458,420,463,407,456,369,430,336,399,290,344"/>
+<area shape="rect" id="Node000011" href="$db/dde/internal_8h.html#abf7d184a231f4803c27e7b73234dca54" title=" " alt="" coords="418,515,586,555"/>
+<area shape="poly" id="edge10_Node000008_Node000011" title=" " alt="" coords="292,342,308,374,334,417,368,462,410,501,417,506,414,511,406,505,364,466,329,420,303,376,287,344"/>
+<area shape="rect" id="Node000012" href="$d4/dcc/libusockets_8h.html#a3476de011ee6bdc9c3297cceb87733f2" title=" " alt="" coords="441,268,563,293"/>
+<area shape="poly" id="edge11_Node000008_Node000012" title=" " alt="" coords="339,315,431,294,432,299,340,320"/>
+<area shape="rect" id="Node000013" href="$d4/dcc/libusockets_8h.html#a4fd16505fc877b6169c5f0d47a27185e" title=" " alt="" coords="443,317,561,343"/>
+<area shape="poly" id="edge12_Node000008_Node000013" title=" " alt="" coords="361,327,429,327,429,333,361,333"/>
+<area shape="rect" id="Node000014" href="$d5/df8/socket_8c.html#a4bd936fb0a987015bf32174cfed9b477" title=" " alt="" coords="411,367,593,392"/>
+<area shape="poly" id="edge15_Node000008_Node000014" title=" " alt="" coords="340,340,432,361,431,366,339,345"/>
+<area shape="rect" id="Node000015" href="$db/dde/internal_8h.html#a8cd50a8354f8185d4c287bbed4ddc7ba" title=" " alt="" coords="647,339,809,364"/>
+<area shape="poly" id="edge16_Node000014_Node000015" title=" " alt="" coords="593,365,633,360,634,366,593,371"/>
+<area shape="rect" id="Node000016" href="$db/dde/internal_8h.html#ab7032daab5e11bb42afc7c8b85a1a387" title=" " alt="" coords="644,389,812,429"/>
+<area shape="poly" id="edge17_Node000014_Node000016" title=" " alt="" coords="593,388,631,393,630,399,593,394"/>
+</map>

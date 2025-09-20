@@ -1,0 +1,9 @@
+<map id="StoreRegistry::StoreRegistry" name="StoreRegistry::StoreRegistry">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,29,211,55"/>
+<area shape="rect" id="Node000002" href="$d1/d87/classmaph_1_1_maph.html#a6e4447f17edf646437bca5b2afea5ab0" title="Open an existing database file." alt="" coords="259,29,401,55"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="211,39,245,39,245,45,211,45"/>
+<area shape="poly" id="edge4_Node000002_Node000002" title=" " alt="" coords="298,31,292,21,295,11,308,5,330,3,356,6,367,15,364,19,354,11,330,8,310,10,299,15,297,20,303,28"/>
+<area shape="rect" id="Node000003" href="$d1/d87/classmaph_1_1_maph.html#a3e9e2bde288aba2a98fd09c0a8c13153" title="Close the database and unmap memory." alt="" coords="449,29,595,55"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="402,39,435,39,435,45,402,45"/>
+<area shape="poly" id="edge3_Node000003_Node000003" title=" " alt="" coords="490,31,484,21,487,11,500,5,522,3,548,6,559,15,556,19,546,11,522,8,502,10,491,15,489,20,495,28"/>
+</map>

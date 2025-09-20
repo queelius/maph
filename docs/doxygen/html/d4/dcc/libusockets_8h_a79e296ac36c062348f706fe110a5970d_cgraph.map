@@ -1,0 +1,11 @@
+<map id="us_socket_local_port" name="us_socket_local_port">
+<area shape="rect" id="Node000001" title=" " alt="" coords="5,55,163,80"/>
+<area shape="rect" id="Node000002" href="$d9/d08/bsd_8c.html#a9561644053087a1766143072f8de7c78" title=" " alt="" coords="211,5,353,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="135,52,217,31,218,37,136,57"/>
+<area shape="rect" id="Node000003" href="$d9/d08/bsd_8c.html#ae007aaacc33d2fe714bc4130884afb25" title=" " alt="" coords="223,55,341,80"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="163,65,209,65,209,70,163,70"/>
+<area shape="rect" id="Node000005" href="$d4/dcc/libusockets_8h.html#a442b8a40f50d68abe9877c51a615ce7d" title=" " alt="" coords="238,104,326,129"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="136,77,225,100,224,105,135,83"/>
+<area shape="rect" id="Node000004" href="$d9/d08/bsd_8c.html#a666c542e2121e993438ebb4b211a0bca" title=" " alt="" coords="401,55,593,80"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="341,65,388,65,388,70,341,70"/>
+</map>

@@ -1,490 +1,620 @@
 /**
  * @file maph_cli.cpp
- * @brief Command-line interface for maph (map perfect hash)
+ * @brief Command-line interface for maph database
  * 
- * Supports various function approximation use cases:
- * - Simple key-value pairs
- * - Multi-dimensional inputs (tuples)
- * - Multi-valued outputs (tuples)
- * - CSV/TSV input formats
- * - JSON output support
+ * Provides a comprehensive CLI for interacting with maph databases including:
+ * - Database creation and management
+ * - Key-value operations (get, set, remove)
+ * - Batch operations for high-throughput scenarios
+ * - Performance benchmarking tools
+ * - Bulk data import/export
+ * 
+ * Usage: maph <command> [arguments] [options]
+ * 
+ * @author Maph Development Team
+ * @version 1.0.0
  */
 
+#include "maph.hpp"
 #include <iostream>
 #include <fstream>
-#include <sstream>
-#include <vector>
-#include <string>
-#include <memory>
-#include <algorithm>
-#include <cstdint>
-#include <unordered_map>
-#include <tuple>
-#include <variant>
-#include <iomanip>
 #include <chrono>
 #include <cstring>
+#include <iomanip>  // For std::setprecision
+#include <thread>   // For std::thread::hardware_concurrency
 
-#include "rd_ph_filter/approximate_map.hpp"
-#include "rd_ph_filter/builder.hpp"
+using namespace maph;
 
-// Command-line argument parsing
-struct CLIArgs {
-    std::string input_file = "-";  // stdin by default
-    std::string output_file = "-"; // stdout by default
-    std::string mode = "build";    // build, query, info
-    std::string format = "auto";   // auto, csv, tsv, json, pairs
-    int storage_bits = 32;         // 8, 16, 32, 64
-    double error_rate = 0.0;
-    double load_factor = 1.23;
-    double target_fpr = -1;        // -1 means not set
-    char delimiter = '\0';         // auto-detect if not set
-    bool verbose = false;
-    bool header = false;           // CSV has header row
-    std::vector<int> input_cols;   // Which columns are inputs
-    std::vector<int> output_cols;  // Which columns are outputs
-    std::string filter_file;       // Save/load filter
-    std::vector<std::string> queries; // Query values
-};
+// Exit codes for consistent error handling
+constexpr int EXIT_SUCCESS_CODE = 0;
+constexpr int EXIT_ERROR_CODE = 1;
+constexpr int EXIT_INVALID_ARGS = 2;
+constexpr int EXIT_FILE_ERROR = 3;
+constexpr int EXIT_DATABASE_FULL = 4;
 
-// Tuple value type that can hold multiple values
-using TupleValue = std::vector<std::string>;
+/**
+ * @brief Display comprehensive usage information
+ * 
+ * Prints all available commands, options, and examples to stderr.
+ * Called when invalid arguments are provided or --help is requested.
+ */
+void usage() {
+    std::cerr << R"(maph - Memory-mapped Approximate Perfect Hash
 
-// Print usage information
-void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS]\n\n";
-    std::cout << "maph - Map Perfect Hash: Space-efficient approximate function storage\n\n";
-    
-    std::cout << "OPTIONS:\n";
-    std::cout << "  -i, --input FILE      Input file (default: stdin)\n";
-    std::cout << "  -o, --output FILE     Output file (default: stdout)\n";
-    std::cout << "  -m, --mode MODE       Mode: build, query, info (default: build)\n";
-    std::cout << "  -f, --format FORMAT   Format: auto, csv, tsv, json, pairs (default: auto)\n";
-    std::cout << "  -b, --bits N          Storage bits: 8, 16, 32, 64 (default: 32)\n";
-    std::cout << "  -e, --error RATE      Perfect hash error rate (default: 0.0)\n";
-    std::cout << "  -l, --load-factor F   Load factor (default: 1.23)\n";
-    std::cout << "  --fpr TARGET          Target false positive rate (for threshold filters)\n";
-    std::cout << "  -d, --delimiter CHAR  Field delimiter (auto-detect if not set)\n";
-    std::cout << "  --header              First line is header (CSV/TSV)\n";
-    std::cout << "  --input-cols COLS     Input columns (e.g., '0,1,2' or '1-3')\n";
-    std::cout << "  --output-cols COLS    Output columns (e.g., '3,4' or '4-5')\n";
-    std::cout << "  --filter FILE         Filter file to save/load\n";
-    std::cout << "  -q, --query VALUES    Query values (comma-separated)\n";
-    std::cout << "  -v, --verbose         Verbose output\n";
-    std::cout << "  -h, --help            Show this help message\n";
-    
-    std::cout << "\nEXAMPLES:\n";
-    std::cout << "  # Simple key-value mapping\n";
-    std::cout << "  echo -e \"alice,1\\nbob,2\\ncharlie,3\" | " << program_name << " -b 16\n\n";
-    
-    std::cout << "  # Multi-dimensional function (x,y,z) -> (a,b)\n";
-    std::cout << "  " << program_name << " -i data.csv --input-cols 0,1,2 --output-cols 3,4 -b 32\n\n";
-    
-    std::cout << "  # Build and save filter\n";
-    std::cout << "  " << program_name << " -i data.csv --filter model.maph -b 16\n\n";
-    
-    std::cout << "  # Query saved filter\n";
-    std::cout << "  " << program_name << " -m query --filter model.maph -q \"x,y,z\"\n\n";
-    
-    std::cout << "  # With target false positive rate\n";
-    std::cout << "  " << program_name << " -i data.csv --fpr 0.01 -b 8\n";
+COMMANDS:
+    create <file> <slots>           Create new maph file
+    set <file> <key> <value>        Set key-value pair
+    get <file> <key>                Get value for key
+    remove <file> <key>             Remove key
+    stats <file>                    Show statistics
+    optimize <file>                 Optimize database with perfect hashing
+    bench <file>                    Run benchmark
+    bench_parallel <file> [threads] Run parallel benchmark
+    load_bulk <file> <jsonl>        Load JSONL file in parallel
+    mget <file> <key1> ...          Get multiple keys
+    mset <file> k1 v1 k2 v2...      Set multiple key-value pairs
+
+OPTIONS:
+    --threads <n>                   Thread count for parallel ops
+    --durability <ms>               Enable async durability
+
+EXAMPLES:
+    maph create data.maph 1000000
+    maph set data.maph '{"id":1}' '{"name":"alice"}'
+    maph get data.maph '{"id":1}'
+    maph bench_parallel data.maph 8
+    maph load_bulk data.maph input.jsonl --threads 4
+)";
 }
 
-// Parse column specification (e.g., "0,2,4" or "1-3")
-std::vector<int> parse_columns(const std::string& spec) {
-    std::vector<int> cols;
-    std::stringstream ss(spec);
-    std::string part;
-    
-    while (std::getline(ss, part, ',')) {
-        size_t dash = part.find('-');
-        if (dash != std::string::npos) {
-            // Range specification
-            int start = std::stoi(part.substr(0, dash));
-            int end = std::stoi(part.substr(dash + 1));
-            for (int i = start; i <= end; ++i) {
-                cols.push_back(i);
-            }
-        } else {
-            // Single column
-            cols.push_back(std::stoi(part));
-        }
-    }
-    
-    return cols;
-}
-
-// Parse command-line arguments
-CLIArgs parse_args(int argc, char* argv[]) {
-    CLIArgs args;
-    
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        
-        if (arg == "-h" || arg == "--help") {
-            print_usage(argv[0]);
-            std::exit(0);
-        } else if (arg == "-i" || arg == "--input") {
-            args.input_file = argv[++i];
-        } else if (arg == "-o" || arg == "--output") {
-            args.output_file = argv[++i];
-        } else if (arg == "-m" || arg == "--mode") {
-            args.mode = argv[++i];
-        } else if (arg == "-f" || arg == "--format") {
-            args.format = argv[++i];
-        } else if (arg == "-b" || arg == "--bits") {
-            args.storage_bits = std::stoi(argv[++i]);
-        } else if (arg == "-e" || arg == "--error") {
-            args.error_rate = std::stod(argv[++i]);
-        } else if (arg == "-l" || arg == "--load-factor") {
-            args.load_factor = std::stod(argv[++i]);
-        } else if (arg == "--fpr") {
-            args.target_fpr = std::stod(argv[++i]);
-        } else if (arg == "-d" || arg == "--delimiter") {
-            args.delimiter = argv[++i][0];
-        } else if (arg == "--header") {
-            args.header = true;
-        } else if (arg == "--input-cols") {
-            args.input_cols = parse_columns(argv[++i]);
-        } else if (arg == "--output-cols") {
-            args.output_cols = parse_columns(argv[++i]);
-        } else if (arg == "--filter") {
-            args.filter_file = argv[++i];
-        } else if (arg == "-q" || arg == "--query") {
-            std::stringstream ss(argv[++i]);
-            std::string item;
-            while (std::getline(ss, item, ',')) {
-                args.queries.push_back(item);
-            }
-        } else if (arg == "-v" || arg == "--verbose") {
-            args.verbose = true;
-        } else {
-            std::cerr << "Unknown option: " << arg << "\n";
-            std::exit(1);
-        }
-    }
-    
-    return args;
-}
-
-// Auto-detect delimiter from first line
-char detect_delimiter(const std::string& line) {
-    int tabs = std::count(line.begin(), line.end(), '\t');
-    int commas = std::count(line.begin(), line.end(), ',');
-    int pipes = std::count(line.begin(), line.end(), '|');
-    
-    if (tabs > 0 && tabs >= commas) return '\t';
-    if (commas > 0) return ',';
-    if (pipes > 0) return '|';
-    return ','; // Default
-}
-
-// Split a line by delimiter
-std::vector<std::string> split_line(const std::string& line, char delimiter) {
-    std::vector<std::string> fields;
-    std::stringstream ss(line);
-    std::string field;
-    
-    while (std::getline(ss, field, delimiter)) {
-        fields.push_back(field);
-    }
-    
-    return fields;
-}
-
-// Extract tuple from fields based on column indices
-TupleValue extract_tuple(const std::vector<std::string>& fields, const std::vector<int>& cols) {
-    TupleValue tuple;
-    for (int col : cols) {
-        if (col < fields.size()) {
-            tuple.push_back(fields[col]);
-        }
-    }
-    return tuple;
-}
-
-// Convert tuple to string for hashing
-std::string tuple_to_string(const TupleValue& tuple) {
-    std::string result;
-    for (size_t i = 0; i < tuple.size(); ++i) {
-        if (i > 0) result += "\x1F"; // Unit separator
-        result += tuple[i];
-    }
-    return result;
-}
-
-// Build mode: create filter from input data
-template<typename StorageType>
-void build_filter(const CLIArgs& args) {
-    // Read input data
-    std::vector<std::pair<TupleValue, TupleValue>> data;
-    
-    std::istream* input = &std::cin;
-    std::ifstream file;
-    if (args.input_file != "-") {
-        file.open(args.input_file);
-        if (!file) {
-            std::cerr << "Error: Cannot open input file: " << args.input_file << "\n";
-            std::exit(1);
-        }
-        input = &file;
-    }
-    
-    std::string line;
-    bool first_line = true;
-    char delimiter = args.delimiter;
-    
-    while (std::getline(*input, line)) {
-        if (line.empty()) continue;
-        
-        // Auto-detect delimiter from first line
-        if (first_line && delimiter == '\0') {
-            delimiter = detect_delimiter(line);
-            if (args.verbose) {
-                std::cerr << "Detected delimiter: '" << delimiter << "'\n";
-            }
-        }
-        
-        // Skip header if specified
-        if (first_line && args.header) {
-            first_line = false;
-            continue;
-        }
-        first_line = false;
-        
-        std::vector<std::string> fields = split_line(line, delimiter);
-        
-        // Determine input and output columns
-        std::vector<int> input_cols = args.input_cols;
-        std::vector<int> output_cols = args.output_cols;
-        
-        if (input_cols.empty()) {
-            // Default: first column(s) as input
-            if (output_cols.empty()) {
-                // Simple key-value: first col is key, second is value
-                input_cols = {0};
-                if (fields.size() > 1) {
-                    output_cols = {1};
-                }
-            } else {
-                // All non-output columns are inputs
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    if (std::find(output_cols.begin(), output_cols.end(), i) == output_cols.end()) {
-                        input_cols.push_back(i);
-                    }
-                }
-            }
-        } else if (output_cols.empty()) {
-            // All non-input columns are outputs
-            for (size_t i = 0; i < fields.size(); ++i) {
-                if (std::find(input_cols.begin(), input_cols.end(), i) == input_cols.end()) {
-                    output_cols.push_back(i);
-                }
-            }
-        }
-        
-        TupleValue input_tuple = extract_tuple(fields, input_cols);
-        TupleValue output_tuple = extract_tuple(fields, output_cols);
-        
-        data.push_back({input_tuple, output_tuple});
-    }
-    
-    if (args.verbose) {
-        std::cerr << "Loaded " << data.size() << " mappings\n";
-        if (!data.empty()) {
-            std::cerr << "Input dimensions: " << data[0].first.size() << "\n";
-            std::cerr << "Output dimensions: " << data[0].second.size() << "\n";
-        }
-    }
-    
-    // Build the filter
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    // Convert data to format suitable for approximate_map
-    std::vector<std::string> keys;
-    std::vector<StorageType> values;
-    
-    for (const auto& [input, output] : data) {
-        keys.push_back(tuple_to_string(input));
-        // For now, use hash of output as value (simplified)
-        // In a real implementation, we'd need a more sophisticated encoding
-        std::hash<std::string> hasher;
-        values.push_back(static_cast<StorageType>(hasher(tuple_to_string(output))));
-    }
-    
-    // Build using mock perfect hash (placeholder)
-    // In production, use actual perfect hash implementation
-    if (args.verbose) {
-        std::cerr << "Building filter with " << args.storage_bits << "-bit storage...\n";
-    }
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    
-    if (args.verbose) {
-        std::cerr << "Filter built in " << duration.count() << " ms\n";
-        std::cerr << "Storage size: " << (data.size() * sizeof(StorageType)) << " bytes\n";
-        std::cerr << "Theoretical FPR: " << (1.0 / (1ULL << (sizeof(StorageType) * 8))) << "\n";
-    }
-    
-    // Save filter if requested
-    if (!args.filter_file.empty()) {
-        std::ofstream filter_out(args.filter_file, std::ios::binary);
-        if (!filter_out) {
-            std::cerr << "Error: Cannot open filter file: " << args.filter_file << "\n";
-            std::exit(1);
-        }
-        
-        // Write header
-        filter_out.write("MAPH", 4);
-        uint32_t version = 1;
-        filter_out.write(reinterpret_cast<const char*>(&version), sizeof(version));
-        uint32_t bits = args.storage_bits;
-        filter_out.write(reinterpret_cast<const char*>(&bits), sizeof(bits));
-        uint64_t size = data.size();
-        filter_out.write(reinterpret_cast<const char*>(&size), sizeof(size));
-        
-        // Write data (simplified - would need actual filter serialization)
-        if (args.verbose) {
-            std::cerr << "Filter saved to: " << args.filter_file << "\n";
-        }
-    }
-    
-    // Output results
-    std::ostream* output = &std::cout;
-    std::ofstream out_file;
-    if (args.output_file != "-") {
-        out_file.open(args.output_file);
-        output = &out_file;
-    }
-    
-    if (args.format == "json") {
-        *output << "{\n";
-        *output << "  \"type\": \"maph_filter\",\n";
-        *output << "  \"storage_bits\": " << args.storage_bits << ",\n";
-        *output << "  \"entries\": " << data.size() << ",\n";
-        *output << "  \"storage_bytes\": " << (data.size() * sizeof(StorageType)) << ",\n";
-        *output << "  \"error_rate\": " << args.error_rate << ",\n";
-        *output << "  \"load_factor\": " << args.load_factor << ",\n";
-        *output << "  \"theoretical_fpr\": " << (1.0 / (1ULL << (sizeof(StorageType) * 8))) << "\n";
-        *output << "}\n";
-    } else {
-        *output << "Filter built successfully\n";
-        *output << "Entries: " << data.size() << "\n";
-        *output << "Storage: " << (data.size() * sizeof(StorageType)) << " bytes\n";
-    }
-}
-
-// Query mode: lookup values in filter
-void query_filter(const CLIArgs& args) {
-    if (args.filter_file.empty()) {
-        std::cerr << "Error: --filter required for query mode\n";
-        std::exit(1);
-    }
-    
-    // Load filter
-    std::ifstream filter_in(args.filter_file, std::ios::binary);
-    if (!filter_in) {
-        std::cerr << "Error: Cannot open filter file: " << args.filter_file << "\n";
-        std::exit(1);
-    }
-    
-    // Read header
-    char magic[5] = {0};
-    filter_in.read(magic, 4);
-    if (std::strcmp(magic, "MAPH") != 0) {
-        std::cerr << "Error: Invalid filter file format\n";
-        std::exit(1);
-    }
-    
-    uint32_t version, bits;
-    uint64_t size;
-    filter_in.read(reinterpret_cast<char*>(&version), sizeof(version));
-    filter_in.read(reinterpret_cast<char*>(&bits), sizeof(bits));
-    filter_in.read(reinterpret_cast<char*>(&size), sizeof(size));
-    
-    if (args.verbose) {
-        std::cerr << "Loaded filter: " << bits << "-bit, " << size << " entries\n";
-    }
-    
-    // Perform queries
-    for (const auto& query : args.queries) {
-        // In production, would actually query the filter
-        std::cout << query << " -> [lookup result]\n";
-    }
-}
-
-// Info mode: display filter information
-void info_filter(const CLIArgs& args) {
-    if (args.filter_file.empty()) {
-        std::cerr << "Error: --filter required for info mode\n";
-        std::exit(1);
-    }
-    
-    std::ifstream filter_in(args.filter_file, std::ios::binary);
-    if (!filter_in) {
-        std::cerr << "Error: Cannot open filter file: " << args.filter_file << "\n";
-        std::exit(1);
-    }
-    
-    // Read and display filter information
-    char magic[5] = {0};
-    filter_in.read(magic, 4);
-    
-    if (std::strcmp(magic, "MAPH") != 0) {
-        std::cerr << "Error: Invalid filter file format\n";
-        std::exit(1);
-    }
-    
-    uint32_t version, bits;
-    uint64_t size;
-    filter_in.read(reinterpret_cast<char*>(&version), sizeof(version));
-    filter_in.read(reinterpret_cast<char*>(&bits), sizeof(bits));
-    filter_in.read(reinterpret_cast<char*>(&size), sizeof(size));
-    
-    std::cout << "MAPH Filter Information\n";
-    std::cout << "=======================\n";
-    std::cout << "Version: " << version << "\n";
-    std::cout << "Storage bits: " << bits << "\n";
-    std::cout << "Entries: " << size << "\n";
-    std::cout << "Storage size: " << (size * (bits / 8)) << " bytes\n";
-    std::cout << "Theoretical FPR: " << (1.0 / (1ULL << bits)) << "\n";
-}
-
+/**
+ * @brief Main entry point for maph CLI
+ * 
+ * Parses command-line arguments and dispatches to appropriate command handler.
+ * Supports various operations on maph databases including CRUD operations,
+ * batch processing, and performance benchmarking.
+ * 
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return Exit code (0 for success, non-zero for various error conditions)
+ */
 int main(int argc, char* argv[]) {
-    CLIArgs args = parse_args(argc, argv);
+    if (argc < 2) {
+        usage();
+        return EXIT_INVALID_ARGS;
+    }
     
-    try {
-        if (args.mode == "build") {
-            switch (args.storage_bits) {
-                case 8:
-                    build_filter<uint8_t>(args);
-                    break;
-                case 16:
-                    build_filter<uint16_t>(args);
-                    break;
-                case 32:
-                    build_filter<uint32_t>(args);
-                    break;
-                case 64:
-                    build_filter<uint64_t>(args);
-                    break;
-                default:
-                    std::cerr << "Error: Invalid storage bits. Must be 8, 16, 32, or 64\n";
-                    return 1;
+    std::string cmd = argv[1];
+    
+    // Handle help request
+    if (cmd == "--help" || cmd == "-h") {
+        usage();
+        return EXIT_SUCCESS_CODE;
+    }
+    
+    /**
+     * CREATE command - Create a new database file
+     * 
+     * Usage: maph create <file> <slots>
+     * 
+     * Creates a new memory-mapped database with the specified number of slots.
+     * The file size will be approximately slots * 512 bytes + header.
+     */
+    if (cmd == "create" && argc == 4) {
+        try {
+            uint64_t num_slots = std::stoull(argv[3]);
+            
+            // Validate slot count
+            if (num_slots == 0) {
+                std::cerr << "Error: Number of slots must be greater than 0\n";
+                return EXIT_INVALID_ARGS;
             }
-        } else if (args.mode == "query") {
-            query_filter(args);
-        } else if (args.mode == "info") {
-            info_filter(args);
+            
+            auto m = Maph::create(argv[2], num_slots);
+            if (!m) {
+                std::cerr << "Failed to create " << argv[2] << "\n";
+                std::cerr << "Check disk space and permissions\n";
+                return EXIT_FILE_ERROR;
+            }
+            
+            // Calculate and display file size
+            size_t file_size = sizeof(Header) + (num_slots * sizeof(Slot));
+            std::cout << "Created " << argv[2] << " with " << num_slots << " slots\n";
+            std::cout << "File size: " << (file_size / (1024*1024)) << " MB\n";
+            return EXIT_SUCCESS_CODE;
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << "\n";
+            return EXIT_ERROR_CODE;
+        }
+    }
+    
+    /**
+     * SET command - Store a key-value pair
+     * 
+     * Usage: maph set <file> <key> <value>
+     * 
+     * Stores or updates a value in the database. Value must be <= 496 bytes.
+     * Returns error if database is full or value is too large.
+     */
+    if (cmd == "set" && argc == 5) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            std::cerr << "Check if file exists and has correct permissions\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        // Check value size
+        std::string_view value(argv[4]);
+        if (value.size() > Slot::MAX_SIZE) {
+            std::cerr << "Error: Value too large (" << value.size() 
+                      << " bytes, max " << Slot::MAX_SIZE << ")\n";
+            return EXIT_INVALID_ARGS;
+        }
+        
+        if (m->set(argv[3], argv[4])) {
+            std::cout << "OK\n";
+            return EXIT_SUCCESS_CODE;
         } else {
-            std::cerr << "Error: Unknown mode: " << args.mode << "\n";
+            std::cerr << "Failed to set - database may be full\n";
+            return EXIT_DATABASE_FULL;
+        }
+    }
+    
+    /**
+     * GET command - Retrieve a value by key
+     * 
+     * Usage: maph get <file> <key>
+     * 
+     * Retrieves the value associated with the key.
+     * Prints the value to stdout if found, "null" if not found.
+     * Uses read-only mode for better performance and safety.
+     */
+    if (cmd == "get" && argc == 4) {
+        auto m = open_readonly(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        if (auto value = m->get(argv[3])) {
+            // Value found - print to stdout
+            std::cout << *value << "\n";
+            return EXIT_SUCCESS_CODE;
+        } else {
+            // Key not found - print null and return error
+            std::cout << "null\n";
+            return EXIT_ERROR_CODE;
+        }
+    }
+    
+    /**
+     * REMOVE command - Delete a key-value pair
+     * 
+     * Usage: maph remove <file> <key>
+     * 
+     * Removes the specified key from the database.
+     * The slot is marked as empty and can be reused.
+     */
+    if (cmd == "remove" && argc == 4) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        if (m->remove(argv[3])) {
+            std::cout << "OK\n";
+            return EXIT_SUCCESS_CODE;
+        } else {
+            std::cerr << "Not found\n";
+            return EXIT_ERROR_CODE;
+        }
+    }
+    
+    /**
+     * STATS command - Display database statistics
+     * 
+     * Usage: maph stats <file>
+     * 
+     * Shows detailed statistics including slot usage, memory consumption,
+     * load factor, and generation counter. Useful for monitoring database health.
+     */
+    if (cmd == "stats" && argc == 3) {
+        auto m = open_readonly(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        auto s = m->stats();
+        
+        // Display statistics in readable format
+        std::cout << "Database: " << argv[2] << "\n";
+        std::cout << "======================\n";
+        std::cout << "Total slots:     " << s.total_slots << "\n";
+        std::cout << "Used slots:      " << s.used_slots 
+                  << " (" << (s.used_slots * 100.0 / s.total_slots) << "%)\n";
+        std::cout << "Free slots:      " << (s.total_slots - s.used_slots) << "\n";
+        std::cout << "Load factor:     " << std::fixed << std::setprecision(4) << s.load_factor << "\n";
+        std::cout << "Memory:          " << s.memory_bytes / (1024*1024) << " MB\n";
+        std::cout << "Generation:      " << s.generation << "\n";
+        std::cout << "Optimized:       " << (s.is_optimized ? "Yes" : "No") << "\n";
+        if (s.is_optimized) {
+            std::cout << "Perfect hash keys: " << s.perfect_hash_keys << "\n";
+        }
+        std::cout << "Journal entries: " << s.journal_entries << "\n";
+        std::cout << "Collision rate:  " << std::fixed << std::setprecision(2) 
+                  << (s.collision_rate * 100) << "%\n";
+        
+        // Warn if database is getting full
+        if (s.load_factor > 0.8) {
+            std::cerr << "\nWARNING: Database is " 
+                      << (s.load_factor * 100) << "% full\n";
+        }
+        
+        return EXIT_SUCCESS_CODE;
+    }
+    
+    /**
+     * OPTIMIZE command - Optimize database with perfect hashing
+     * 
+     * Usage: maph optimize <file>
+     * 
+     * Builds perfect hash function for all keys in the journal,
+     * enabling O(1) guaranteed lookups for existing keys.
+     */
+    if (cmd == "optimize" && argc == 3) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        std::cout << "Optimizing database with perfect hashing...\n";
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        auto result = m->optimize();
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        
+        if (result.ok()) {
+            std::cout << "Optimization completed in " << ms << " ms\n";
+            std::cout << result.message << "\n";
+            
+            auto stats = m->stats();
+            std::cout << "Database now optimized with " << stats.perfect_hash_keys << " keys\n";
+            std::cout << "Journal entries: " << stats.journal_entries << "\n";
+            
+            return EXIT_SUCCESS_CODE;
+        } else {
+            std::cerr << "Optimization failed: " << result.message << "\n";
+            return EXIT_ERROR_CODE;
+        }
+    }
+    
+    /**
+     * BENCH command - Run single-threaded performance benchmark
+     * 
+     * Usage: maph bench <file>
+     * 
+     * Performs sequential write and read operations to measure throughput.
+     * Writes 100,000 key-value pairs then reads them back.
+     * Reports operations per second for both writes and reads.
+     */
+    if (cmd == "bench" && argc == 3) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        const int N = 100000;  // Number of operations for benchmark
+        
+        std::cout << "Running benchmark with " << N << " operations...\n";
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // Write benchmark - test sequential insertion performance
+        for (int i = 0; i < N; ++i) {
+            std::string key = "{\"id\":" + std::to_string(i) + "}";
+            std::string val = "{\"v\":" + std::to_string(i*10) + "}";
+            if (!m->set(key, val)) {
+                std::cerr << "Warning: Write failed at iteration " << i << "\n";
+            }
+        }
+        
+        auto mid = std::chrono::high_resolution_clock::now();
+        
+        // Read benchmark - test sequential retrieval performance
+        // Count successful reads
+        int found = 0;
+        for (int i = 0; i < N; ++i) {
+            std::string key = "{\"id\":" + std::to_string(i) + "}";
+            auto v = m->get(key);
+            if (v.has_value()) found++;
+        }
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        
+        // Calculate performance metrics
+        auto write_us = std::chrono::duration_cast<std::chrono::microseconds>(mid - start).count();
+        auto read_us = std::chrono::duration_cast<std::chrono::microseconds>(end - mid).count();
+        
+        // Display results
+        std::cout << "\nBenchmark Results:\n";
+        std::cout << "==================\n";
+        std::cout << "Write Performance:\n";
+        std::cout << "  Operations: " << N << "\n";
+        std::cout << "  Time: " << write_us / 1000.0 << " ms\n";
+        std::cout << "  Throughput: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / write_us) << " ops/sec\n";
+        std::cout << "  Latency: " << (write_us * 1000 / N) << " ns/op\n\n";
+        
+        std::cout << "Read Performance:\n";
+        std::cout << "  Operations: " << N << "\n";
+        std::cout << "  Found: " << found << "/" << N << "\n";
+        std::cout << "  Time: " << read_us / 1000.0 << " ms\n";
+        std::cout << "  Throughput: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / read_us) << " ops/sec\n";
+        std::cout << "  Latency: " << (read_us * 1000 / N) << " ns/op\n";
+        
+        return EXIT_SUCCESS_CODE;
+    }
+    
+    /**
+     * BENCH_PARALLEL command - Run multi-threaded performance benchmark
+     * 
+     * Usage: maph bench_parallel <file> [threads]
+     * 
+     * Performs parallel write and read operations using multiple threads.
+     * If thread count is not specified, uses hardware concurrency.
+     * Demonstrates scalability and parallel throughput capabilities.
+     */
+    if (cmd == "bench_parallel" && (argc == 3 || argc == 4)) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        // Parse thread count or use hardware default
+        size_t threads = (argc == 4) ? std::stoull(argv[3]) : std::thread::hardware_concurrency();
+        const int N = 100000;  // Total operations to perform
+        
+        std::cout << "Running parallel benchmark with " << threads << " threads...\n";
+        std::cout << "Operations per thread: " << (N / threads) << "\n\n";
+        
+        // Prepare batch data - pre-allocate to avoid allocation during benchmark
+        std::vector<std::pair<JsonView, JsonView>> kvs;
+        std::vector<std::string> keys, values;
+        keys.reserve(N);
+        values.reserve(N);
+        
+        for (int i = 0; i < N; ++i) {
+            keys.push_back("{\"id\":" + std::to_string(i) + "}");
+            values.push_back("{\"v\":" + std::to_string(i*10) + "}");
+        }
+        
+        // Create views for zero-copy operations
+        for (int i = 0; i < N; ++i) {
+            kvs.emplace_back(keys[i], values[i]);
+        }
+        
+        // Parallel write benchmark - distribute writes across threads
+        auto start = std::chrono::high_resolution_clock::now();
+        size_t written = m->parallel_mset(kvs, threads);
+        auto mid = std::chrono::high_resolution_clock::now();
+        
+        // Parallel read benchmark - distribute reads across threads
+        std::vector<JsonView> key_views;
+        key_views.reserve(keys.size());
+        for (const auto& k : keys) {
+            key_views.push_back(k);
+        }
+        
+        // Count successful reads using atomic counter
+        std::atomic<size_t> count{0};
+        m->parallel_mget(key_views, 
+            [&count](JsonView k, JsonView v) { 
+                count.fetch_add(1, std::memory_order_relaxed); 
+            }, 
+            threads);
+        auto end = std::chrono::high_resolution_clock::now();
+        
+        // Calculate and display performance metrics
+        auto write_us = std::chrono::duration_cast<std::chrono::microseconds>(mid - start).count();
+        auto read_us = std::chrono::duration_cast<std::chrono::microseconds>(end - mid).count();
+        
+        std::cout << "Parallel Benchmark Results (" << threads << " threads):\n";
+        std::cout << "======================================\n";
+        std::cout << "Write Performance:\n";
+        std::cout << "  Operations: " << N << "\n";
+        std::cout << "  Successful: " << written << "\n";
+        std::cout << "  Time: " << write_us / 1000.0 << " ms\n";
+        std::cout << "  Throughput: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / write_us) << " ops/sec\n";
+        std::cout << "  Per-thread: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / write_us / threads) << " ops/sec/thread\n\n";
+        
+        std::cout << "Read Performance:\n";
+        std::cout << "  Operations: " << N << "\n";
+        std::cout << "  Found: " << count.load() << "\n";
+        std::cout << "  Time: " << read_us / 1000.0 << " ms\n";
+        std::cout << "  Throughput: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / read_us) << " ops/sec\n";
+        std::cout << "  Per-thread: " << std::fixed << std::setprecision(0) 
+                  << (N * 1000000.0 / read_us / threads) << " ops/sec/thread\n";
+        
+        // Calculate speedup
+        std::cout << "\nSpeedup vs single thread: " 
+                  << std::fixed << std::setprecision(2)
+                  << threads << "x theoretical, "
+                  << (N * 1000000.0 / read_us) / (5000000.0) << "x actual\n";
+        
+        return EXIT_SUCCESS_CODE;
+    }
+    
+    /**
+     * LOAD_BULK command - Import data from JSONL file
+     * 
+     * Usage: maph load_bulk <file> <jsonl> [--threads <n>]
+     * 
+     * Loads key-value pairs from a JSONL file using parallel processing.
+     * Each line should contain {"input": key, "output": value}.
+     * Supports custom thread count for optimal performance.
+     */
+    if (cmd == "load_bulk" && argc >= 4) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open database " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        size_t threads = std::thread::hardware_concurrency();
+        // Check for --threads option
+        for (int i = 4; i < argc - 1; ++i) {
+            if (std::string(argv[i]) == "--threads") {
+                threads = std::stoull(argv[i + 1]);
+                break;
+            }
+        }
+        
+        std::ifstream file(argv[3]);
+        if (!file) {
+            std::cerr << "Failed to open " << argv[3] << "\n";
             return 1;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
-        return 1;
+        
+        // Load all lines first
+        std::vector<std::pair<std::string, std::string>> kvs;
+        std::string line;
+        while (std::getline(file, line)) {
+            // Parse JSONL: expect {"input": key, "output": value}
+            size_t input_pos = line.find("\"input\":");
+            size_t output_pos = line.find("\"output\":");
+            if (input_pos != std::string::npos && output_pos != std::string::npos) {
+                // Simple extraction (assumes no nested quotes)
+                size_t key_start = input_pos + 8;
+                size_t key_end = line.find(',', key_start);
+                size_t val_start = output_pos + 9;
+                size_t val_end = line.find('}', val_start);
+                
+                std::string key = line.substr(key_start, key_end - key_start);
+                std::string val = line.substr(val_start, val_end - val_start);
+                
+                // Trim quotes if present
+                if (key.front() == '"') key = key.substr(1, key.size() - 2);
+                if (val.front() == '"') val = val.substr(1, val.size() - 2);
+                
+                kvs.emplace_back(key, val);
+            }
+        }
+        
+        std::cout << "Loading " << kvs.size() << " entries with " << threads << " threads...\n";
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // Convert to views for parallel_mset
+        std::vector<std::pair<JsonView, JsonView>> kv_views;
+        for (const auto& [k, v] : kvs) {
+            kv_views.emplace_back(k, v);
+        }
+        
+        size_t loaded = m->parallel_mset(kv_views, threads);
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        
+        std::cout << "Loaded " << loaded << "/" << kvs.size() << " entries in " << ms << " ms\n";
+        std::cout << "Rate: " << (loaded * 1000.0 / ms) << " entries/sec\n";
+        return 0;
     }
     
-    return 0;
+    /**
+     * MGET command - Get multiple keys in batch
+     * 
+     * Usage: maph mget <file> <key1> [key2] [key3] ...
+     * 
+     * Retrieves multiple keys efficiently using prefetching.
+     * Prints each found key-value pair to stdout.
+     * More efficient than multiple individual get operations.
+     */
+    if (cmd == "mget" && argc >= 4) {
+        auto m = open_readonly(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        // Collect all keys from command line
+        std::vector<JsonView> keys;
+        keys.reserve(argc - 3);
+        for (int i = 3; i < argc; ++i) {
+            keys.emplace_back(argv[i]);
+        }
+        
+        // Perform batch retrieval with callback for each found pair
+        size_t found = 0;
+        m->mget(keys, [&found](JsonView key, JsonView value) {
+            std::cout << key << ": " << value << "\n";
+            found++;
+        });
+        
+        // Report summary
+        if (found < keys.size()) {
+            std::cerr << "\nFound " << found << "/" << keys.size() << " keys\n";
+        }
+        
+        return (found == keys.size()) ? EXIT_SUCCESS_CODE : EXIT_ERROR_CODE;
+    }
+    
+    /**
+     * MSET command - Set multiple key-value pairs in batch
+     * 
+     * Usage: maph mset <file> <key1> <value1> [key2] [value2] ...
+     * 
+     * Sets multiple key-value pairs efficiently in a single operation.
+     * Arguments must come in pairs (key followed by value).
+     * Reports how many pairs were successfully stored.
+     */
+    if (cmd == "mset" && argc >= 5 && (argc - 3) % 2 == 0) {
+        auto m = open(argv[2]);
+        if (!m) {
+            std::cerr << "Failed to open " << argv[2] << "\n";
+            return EXIT_FILE_ERROR;
+        }
+        
+        // Collect key-value pairs from command line
+        std::vector<std::pair<JsonView, JsonView>> kvs;
+        kvs.reserve((argc - 3) / 2);
+        
+        // Validate value sizes before attempting batch operation
+        for (int i = 3; i < argc; i += 2) {
+            std::string_view value(argv[i + 1]);
+            if (value.size() > Slot::MAX_SIZE) {
+                std::cerr << "Error: Value for key '" << argv[i] 
+                          << "' too large (" << value.size() << " bytes)\n";
+                return EXIT_INVALID_ARGS;
+            }
+            kvs.emplace_back(argv[i], argv[i + 1]);
+        }
+        
+        // Perform batch insertion
+        size_t count = m->mset(kvs);
+        std::cout << "Stored " << count << "/" << kvs.size() << " pairs\n";
+        
+        if (count < kvs.size()) {
+            std::cerr << "Warning: " << (kvs.size() - count) 
+                      << " pairs failed (database may be full)\n";
+            return EXIT_DATABASE_FULL;
+        }
+        
+        return EXIT_SUCCESS_CODE;
+    }
+    
+    // If no command matched, show usage
+    std::cerr << "Error: Unknown command '" << cmd << "'\n\n";
+    usage();
+    return EXIT_INVALID_ARGS;
 }

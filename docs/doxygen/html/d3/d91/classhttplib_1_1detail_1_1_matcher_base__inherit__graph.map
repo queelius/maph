@@ -1,0 +1,7 @@
+<map id="httplib::detail::MatcherBase" name="httplib::detail::MatcherBase">
+<area shape="rect" id="Node000001" title=" " alt="" coords="110,5,305,131"/>
+<area shape="rect" id="Node000002" href="$d6/d6d/classhttplib_1_1detail_1_1_path_params_matcher.html" title="Captures parameters in request path and stores them in Request::path_params." alt="" coords="5,179,191,279"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="159,144,134,180,130,177,155,141"/>
+<area shape="rect" id="Node000003" href="$dd/d35/classhttplib_1_1detail_1_1_regex_matcher.html" title="Performs std::regex_match on request path and stores the result in Request::matches." alt="" coords="215,186,418,271"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="260,141,290,184,286,187,256,144"/>
+</map>

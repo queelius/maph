@@ -1,0 +1,131 @@
+# GitHub repository settings
+# This file is used by the Settings Probot app
+# https://github.com/apps/settings
+
+repository:
+  # Repository name (should match current name)
+  name: rd_ph_filter
+  
+  # Description for the repository
+  description: "⚡ High-performance memory-mapped key-value database with O(1) lookups using perfect hash functions. Sub-microsecond JSON storage with REST API."
+  
+  # Homepage/Documentation URL
+  homepage: https://yourusername.github.io/rd_ph_filter/
+  
+  # Topics/Keywords for discoverability
+  topics:
+    - database
+    - key-value-store
+    - memory-mapped
+    - mmap
+    - perfect-hash
+    - approximate-data-structures
+    - json
+    - high-performance
+    - cpp17
+    - rest-api
+    - zero-copy
+    - lock-free
+    - simd
+    - avx2
+    - nosql
+  
+  # Make repository public
+  private: false
+  
+  # Enable features
+  has_issues: true
+  has_projects: true
+  has_wiki: true
+  has_downloads: true
+  
+  # Default branch
+  default_branch: main
+  
+  # Allow merge commits
+  allow_merge_commit: true
+  
+  # Allow squash merging
+  allow_squash_merge: true
+  
+  # Allow rebase merging
+  allow_rebase_merge: true
+  
+  # Delete branches after merge
+  delete_branch_on_merge: true
+  
+  # Enable automated security fixes
+  enable_automated_security_fixes: true
+  
+  # Enable vulnerability alerts
+  enable_vulnerability_alerts: true
+  
+  # Archive this repository (false = active)
+  archived: false
+
+# Labels for issues and PRs
+labels:
+  - name: bug
+    color: d73a4a
+    description: Something isn't working
+    
+  - name: enhancement
+    color: a2eeef
+    description: New feature or request
+    
+  - name: documentation
+    color: 0075ca
+    description: Improvements or additions to documentation
+    
+  - name: performance
+    color: yellow
+    description: Performance improvements
+    
+  - name: good first issue
+    color: 7057ff
+    description: Good for newcomers
+    
+  - name: help wanted
+    color: 008672
+    description: Extra attention is needed
+    
+  - name: api
+    color: fbca04
+    description: REST API related
+    
+  - name: core
+    color: 5319e7
+    description: Core library changes
+    
+  - name: test
+    color: bfd4f2
+    description: Testing related
+
+# Branch protection rules
+branches:
+  - name: main
+    # Require PR reviews
+    protection:
+      required_pull_request_reviews:
+        required_approving_review_count: 1
+        dismiss_stale_reviews: true
+        require_code_owner_reviews: true
+      
+      # Require status checks
+      required_status_checks:
+        strict: true
+        contexts:
+          - "build"
+          - "test"
+      
+      # Enforce admins
+      enforce_admins: false
+      
+      # Restrict push access
+      restrictions: null
+      
+      # Allow force pushes
+      allow_force_pushes: false
+      
+      # Allow deletions
+      allow_deletions: false
