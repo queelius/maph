@@ -65,6 +65,11 @@ if(BUILD_EXAMPLES)
     add_executable(v3_simple_test examples/v3_simple_test.cpp)
     target_link_libraries(v3_simple_test PRIVATE maph)
     target_include_directories(v3_simple_test PRIVATE include)
+
+    # Hybrid architecture demo (REST API + direct mmap)
+    add_executable(hybrid_architecture_demo examples/hybrid_architecture_demo.cpp)
+    target_link_libraries(hybrid_architecture_demo PRIVATE maph)
+    target_include_directories(hybrid_architecture_demo PRIVATE include)
 endif()
 
 # Integrations

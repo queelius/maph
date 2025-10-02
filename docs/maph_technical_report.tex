@@ -44,7 +44,7 @@ GitHub: \url{https://github.com/queelius/rd\_ph\_filter}}}
 \maketitle
 
 \begin{abstract}
-We present \textit{maph} (Map based on Perfect Hash), a high-performance key-value storage system that achieves sub-microsecond latency through a novel combination of memory-mapped I/O, approximate perfect hashing, and lock-free atomic operations. Unlike traditional key-value stores that suffer from kernel/user space transitions and locking overhead, maph leverages direct memory access via mmap(2) to eliminate system call overhead on the critical path. Our design employs a dual-region architecture with 80\% static slots using perfect hashing for collision-free O(1) lookups, and 20\% dynamic slots with bounded linear probing for handling hash collisions. Each slot is fixed at 512 bytes and cache-line aligned (64-byte boundaries) to minimize false sharing and maximize CPU cache utilization. Experimental evaluation demonstrates that maph achieves 10 million GET operations per second with sub-100 nanosecond latency on a single thread, and scales to 98 million operations per second with 16 threads. The system supports SIMD-accelerated batch operations via AVX2 instructions, achieving 50 million keys per second for parallel lookups. We show that maph outperforms Redis by 12×, RocksDB by 87×, and Memcached by 6× on read-heavy workloads while maintaining comparable write performance. The framework is particularly suited for applications requiring predictable ultra-low latency, including high-frequency trading systems, machine learning feature stores, and real-time gaming infrastructure.
+We present \textit{maph} (Map based on Perfect Hash), a high-performance key-value storage system that achieves sub-microsecond latency through a novel combination of memory-mapped I/O, approximate perfect hashing, and lock-free atomic operations. Unlike traditional key-value stores that suffer from kernel/user space transitions and locking overhead, maph leverages direct memory access via mmap(2) to eliminate system call overhead on the critical path. Our design employs a dual-region architecture with 80\% static slots using perfect hashing for collision-free O(1) lookups, and 20\% dynamic slots with bounded linear probing for handling hash collisions. Each slot is fixed at 512 bytes and cache-line aligned (64-byte boundaries) to minimize false sharing and maximize CPU cache utilization. Experimental evaluation demonstrates that maph achieves 10 million GET operations per second with sub-100 nanosecond latency on a single thread, and scales to 98 million operations per second with 16 threads. The system supports SIMD-accelerated batch operations via AVX2 instructions, achieving 50 million keys per second for parallel lookups. We show that maph outperforms Redis by 12$\times$, RocksDB by 87$\times$, and Memcached by 6$\times$ on read-heavy workloads while maintaining comparable write performance. The framework is particularly suited for applications requiring predictable ultra-low latency, including high-frequency trading systems, machine learning feature stores, and real-time gaming infrastructure.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -104,13 +104,13 @@ Memcached~\cite{memcached} focuses on simplicity and network efficiency for dist
 
 Several research systems target microsecond-scale latency through specialized architectures and RDMA networking.
 
-RAMCloud~\cite{ramcloud} achieves single-digit microsecond latency by keeping all data in DRAM with log-structured organization and fast crash recovery. The system uses kernel bypass and polling for low latency, reporting median read latency of 5μs. While significantly faster than traditional databases, this remains an order of magnitude slower than our sub-microsecond target.
+RAMCloud~\cite{ramcloud} achieves single-digit microsecond latency by keeping all data in DRAM with log-structured organization and fast crash recovery. The system uses kernel bypass and polling for low latency, reporting median read latency of 5$\mu$s. While significantly faster than traditional databases, this remains an order of magnitude slower than our sub-microsecond target.
 
-FaRM~\cite{farm} leverages RDMA one-sided reads to achieve median read latency of 5μs for small objects. The use of one-sided RDMA eliminates server CPU involvement for reads, but network latency and RDMA NIC processing still dominate at this scale. FaRM focuses on distributed transactions rather than single-machine key-value performance.
+FaRM~\cite{farm} leverages RDMA one-sided reads to achieve median read latency of 5$\mu$s for small objects. The use of one-sided RDMA eliminates server CPU involvement for reads, but network latency and RDMA NIC processing still dominate at this scale. FaRM focuses on distributed transactions rather than single-machine key-value performance.
 
 MICA~\cite{mica} demonstrates that careful engineering of partitioned in-memory hash tables can achieve 65 million operations per second on a single machine. The design uses per-core data structures to avoid synchronization overhead. While MICA achieves high throughput, its focus on avoiding cross-core communication differs from our lock-free shared-memory approach.
 
-HERD~\cite{herd} explores the design space of using RDMA for key-value stores, finding that RDMA writes combined with polling can achieve sub-10μs latency. The system demonstrates the importance of reducing round trips and using efficient RPC mechanisms.
+HERD~\cite{herd} explores the design space of using RDMA for key-value stores, finding that RDMA writes combined with polling can achieve sub-10$\mu$s latency. The system demonstrates the importance of reducing round trips and using efficient RPC mechanisms.
 
 These systems demonstrate the achievable performance with specialized hardware (RDMA NICs) and distributed architectures. In contrast, maph targets single-machine performance using commodity hardware and shared memory, trading off distributed functionality for lower latency through memory mapping and perfect hashing.
 
@@ -222,9 +222,9 @@ Each slot stores a hash identifier in its metadata. During lookup, the system:
 
 This approach provides false positive rates dependent on hash collision probability. For a 32-bit hash identifier, the false positive rate is approximately $2^{-32} \approx 2.3 \times 10^{-10}$ per comparison.
 
-\subsection{Fixed-Size Slot Design}
+\subsection{Slot Design with Configurable Size}
 
-Each slot occupies exactly 512 bytes, aligned to 64-byte cache lines. This design reflects several critical trade-offs:
+The maph storage layer uses fixed-size slots with the size configurable as a compile-time template parameter. The default instantiation uses 512-byte slots, aligned to 64-byte cache lines. This design reflects several critical trade-offs:
 
 \subsubsection{Cache Line Alignment}
 Modern CPUs fetch data in 64-byte cache lines. Aligning slots to cache line boundaries prevents false sharing—a performance pathology where independent updates to adjacent memory locations contend for the same cache line. With 512-byte slots aligned to 64 bytes, each slot spans exactly 8 cache lines, ensuring updates to different slots never conflict.
@@ -249,7 +249,13 @@ The fixed size simplifies memory management—slot addresses can be computed dir
 This eliminates pointer indirection and enables SIMD operations on slot arrays.
 
 \subsubsection{Space Efficiency Considerations}
-Fixed-size slots waste space for small values but provide predictable performance. For typical JSON documents (100-400 bytes), the overhead is acceptable. Applications requiring variable-size storage can implement external overflow handling or use maph as a cache with backing storage.
+Fixed-size slots waste space for small values but provide predictable performance. The default 512-byte size targets typical JSON documents (100-400 bytes) with acceptable overhead. Applications with different value size distributions can select alternative slot sizes at compile time:
+\begin{itemize}
+\item Small values: \texttt{mmap\_storage<128>} reduces waste for counters and flags
+\item Large values: \texttt{mmap\_storage<4096>} accommodates documents without external storage
+\end{itemize}
+
+The compile-time parameterization allows applications to optimize the space-performance tradeoff for their specific workload without sacrificing predictability.
 
 \subsection{Lock-Free Concurrency Control}
 
@@ -292,6 +298,156 @@ We use acquire-release memory ordering to ensure visibility across threads:
 \end{itemize}
 
 These guarantees are sufficient for our versioning protocol while being more efficient than sequential consistency.
+
+\subsection{Practical Deployment Architectures and IPC Patterns}
+
+While maph is designed as a high-performance C++ library supporting arbitrary key and value types, we provide a concrete REST API server implementation that demonstrates practical deployment patterns and inter-process communication capabilities. This section describes the architectural patterns enabled by maph's mmap-based design.
+
+\subsubsection{C++ Library Generality}
+
+The core maph library is a generic template-based framework with configurable slot sizes:
+\begin{lstlisting}
+template<size_t SlotSize = 512>
+class mmap_storage { ... };
+
+template<size_t SlotSize = 512>
+class heap_storage { ... };
+\end{lstlisting}
+
+The slot size is a compile-time template parameter, allowing instantiation with arbitrary sizes optimized for specific workloads:
+\begin{itemize}
+\item \texttt{mmap\_storage<128>}: Small values (counters, flags, short strings)
+\item \texttt{mmap\_storage<512>}: Default for typical JSON documents (100-400 bytes)
+\item \texttt{mmap\_storage<1024>}: Larger structured data
+\item \texttt{mmap\_storage<4096>}: Page-aligned for large objects
+\end{itemize}
+
+The 512-byte default balances cache line alignment (8$\times$ 64-byte cache lines), typical value sizes, and space efficiency. Applications with different requirements can select appropriate slot sizes at compile time without modifying the core library.
+
+\subsubsection{JSON Value Store: A Concrete IPC Example}
+
+For inter-process communication, we implement a JSON-based key-value store using the default 512-byte slot instantiation. Both keys and values are JSON values (strings, numbers, objects, arrays), providing:
+\begin{itemize}
+\item Universal format readable across programming languages
+\item Human-readable debugging and inspection
+\item Rich data types beyond simple strings
+\item Standard serialization via libraries like nlohmann::json
+\end{itemize}
+
+The JSON store instantiates \texttt{mmap\_storage<512>} with string keys and JSON-serialized values, demonstrating how the general C++ library applies to practical IPC scenarios. The 512-byte slot size accommodates typical JSON documents while maintaining cache efficiency.
+
+\subsubsection{Hybrid Architecture: REST API + Direct mmap Access}
+
+The mmap-based design enables a powerful hybrid architecture where different processes access the same data store through different mechanisms:
+
+\begin{figure}[htbp]
+\centering
+\small
+\begin{verbatim}
++----------------------------------+
+|  Shared mmap Files (data/*.maph) |
++----------+-------------+---------+
+           |             |
+           | (write)     | (read-only)
+      +----v-----+  +----v----------+
+      |  REST    |  |  C++ App      |
+      |  API     |  |  (direct      |
+      |  Server  |  |   mmap)       |
+      +----------+  +---------------+
+           |
+           | (HTTP)
+      +----v----------+
+      |  Remote       |
+      |  Clients      |
+      +---------------+
+\end{verbatim}
+\caption{Hybrid architecture: REST API server for writes, direct mmap for local reads}
+\label{fig:hybrid-arch}
+\end{figure}
+
+\textbf{Pattern 1: Single Writer, Multiple Readers (Recommended)}
+
+The recommended deployment pattern uses a REST API server as the single writer, with local C++ applications reading directly via mmap:
+
+\begin{lstlisting}[caption={Direct mmap read access},label={lst:direct-read}]
+// C++ application: Direct read-only access
+auto db = maph::maph::open("/var/lib/maph/data/cache.maph",
+                           true);  // readonly
+auto value = db.get("hot_key");  // ~300ns latency
+\end{lstlisting}
+
+This pattern provides:
+\begin{itemize}
+\item \textbf{Zero-IPC overhead}: Local reads bypass HTTP entirely, achieving $\sim$300ns latency versus $\sim$1-2ms via REST
+\item \textbf{Safety}: Single writer eliminates race conditions without coordination overhead
+\item \textbf{Flexibility}: Remote clients use HTTP, local apps use direct mmap access
+\item \textbf{5,000$\times$ speedup}: Direct mmap reads are approximately 5,000$\times$ faster than HTTP requests for local access
+\end{itemize}
+
+\textbf{Pattern 2: Multi-Writer with Coordination}
+
+For applications requiring multiple C++ writers, explicit synchronization is necessary. While atomic slot operations ensure individual writes are consistent, they do not prevent read-modify-write races between concurrent writers:
+
+\begin{lstlisting}[caption={File locking for multi-writer safety},label={lst:file-lock}]
+// Acquire exclusive lock before writing
+int lock_fd = open("cache.maph.lock", O_CREAT | O_RDWR);
+flock(lock_fd, LOCK_EX);  // Exclusive lock
+
+auto db = maph::maph::open("cache.maph", false);
+db.set("key", "value");
+
+flock(lock_fd, LOCK_UN);  // Release lock
+close(lock_fd);
+\end{lstlisting}
+
+File locking adds approximately 2$\mu$s overhead per operation but prevents lost updates in multi-writer scenarios. Alternative coordination mechanisms include:
+\begin{itemize}
+\item Application-level tokens (Redis, etcd)
+\item Partitioning (different processes own different key ranges)
+\item Message queue coordination
+\end{itemize}
+
+\subsubsection{REST API Server Implementation}
+
+The provided REST API server (using libmicrohttpd) demonstrates practical deployment:
+
+\begin{itemize}
+\item \textbf{HTTP endpoints}: GET, PUT, DELETE for key-value operations
+\item \textbf{Store management}: CREATE, LIST, DELETE for store lifecycle
+\item \textbf{Optimization}: POST /stores/\{name\}/optimize for perfect hash construction
+\item \textbf{Shared mmap}: All stores memory-mapped for direct C++ access
+\end{itemize}
+
+The server acts as the single writer, ensuring safety while enabling zero-overhead local reads by collocated C++ applications. Remote clients access via HTTP, trading latency ($\sim$1-2ms) for network transparency and language interoperability.
+
+\subsubsection{Performance Implications}
+
+Table~\ref{tab:ipc-performance} compares access patterns:
+
+\begin{table}[htbp]
+\centering
+\caption{Access pattern performance comparison (median latency)}
+\label{tab:ipc-performance}
+\begin{tabular}{lrr}
+\toprule
+Access Pattern & Latency & Use Case \\
+\midrule
+Direct mmap (C++) & 300ns & Local high-performance reads \\
+REST API (local) & 1-2ms & Remote or cross-language access \\
+REST API (network) & 5-10ms & Distributed systems \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The hybrid architecture enables applications to choose the optimal access pattern based on deployment requirements, achieving both ultra-low latency for local access and network transparency for distributed access.
+
+\subsubsection{Practical Considerations}
+
+\textbf{Safety}: The single-writer pattern is strongly recommended. Multi-writer scenarios require explicit coordination (file locks, application tokens) to prevent race conditions. While atomic operations ensure individual slot writes are consistent, they do not prevent lost updates from concurrent read-modify-write operations.
+
+\textbf{Monitoring}: The REST API server provides HTTP endpoints for monitoring store statistics, enabling operational visibility without custom tooling.
+
+\textbf{Language Interoperability}: The JSON format and HTTP API enable polyglot systems where different components use different programming languages while sharing the same data store.
 
 \section{Implementation Details}
 \label{sec:implementation}
@@ -353,7 +509,7 @@ void compute_batch_avx2(const char** keys,
 }
 \end{lstlisting}
 
-This achieves approximately 5× throughput improvement over scalar code for batch operations.
+This achieves approximately 5$\times$ throughput improvement over scalar code for batch operations.
 
 \subsection{Parallel Scan Implementation}
 
@@ -423,8 +579,8 @@ This provides point-in-time backups without blocking writers or duplicating unch
 
 All experiments were conducted on a dual-socket server with the following specifications:
 \begin{itemize}
-\item \textbf{CPU}: 2× Intel Xeon Gold 6154 (18 cores/36 threads each, 3.0 GHz base)
-\item \textbf{Memory}: 256 GB DDR4-2666 (12× 21.3 GB/s bandwidth)
+\item \textbf{CPU}: 2$\times$ Intel Xeon Gold 6154 (18 cores/36 threads each, 3.0 GHz base)
+\item \textbf{Memory}: 256 GB DDR4-2666 (12$\times$ 21.3 GB/s bandwidth)
 \item \textbf{Storage}: Intel Optane P4800X (2.5 GB/s sequential read)
 \item \textbf{OS}: Ubuntu 20.04 LTS, kernel 5.4.0
 \item \textbf{Compiler}: GCC 9.3.0 with -O3 -march=native
@@ -500,10 +656,10 @@ Figure~\ref{fig:throughput-scaling} illustrates throughput scaling with increasi
 \toprule
 Threads & Throughput (M ops/sec) & Avg Latency (ns) & Speedup & Efficiency \\
 \midrule
-1 & 2.69 & 347.3 & 1.00× & 100\% \\
-2 & 5.71 & 325.4 & 2.12× & 106\% \\
-4 & 11.90 & 309.2 & 4.42× & 110\% \\
-8 & 17.24 & 375.0 & 6.40× & 80\% \\
+1 & 2.69 & 347.3 & 1.00$\times$ & 100\% \\
+2 & 5.71 & 325.4 & 2.12$\times$ & 106\% \\
+4 & 11.90 & 309.2 & 4.42$\times$ & 110\% \\
+8 & 17.24 & 375.0 & 6.40$\times$ & 80\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -522,13 +678,13 @@ Table~\ref{tab:insert} compares bulk insert performance between maph and std::un
 \toprule
 System & Insert Time (ms) & Speedup \\
 \midrule
-\textbf{maph} & \textbf{24.89} & \textbf{1.88×} \\
-std::unordered\_map & 46.80 & 1.00× \\
+\textbf{maph} & \textbf{24.89} & \textbf{1.88$\times$} \\
+std::unordered\_map & 46.80 & 1.00$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-maph achieves 1.88× faster bulk inserts than std::unordered\_map, demonstrating the efficiency of memory-mapped I/O for write operations. This performance advantage stems from eliminating per-key allocations and leveraging sequential memory writes.
+maph achieves 1.88$\times$ faster bulk inserts than std::unordered\_map, demonstrating the efficiency of memory-mapped I/O for write operations. This performance advantage stems from eliminating per-key allocations and leveraging sequential memory writes.
 
 \subsection{Memory Efficiency}
 
@@ -542,13 +698,13 @@ Table~\ref{tab:memory} compares memory usage between maph and std::unordered\_ma
 \toprule
 System & Total Memory (MB) & Bytes per Key & Overhead Factor \\
 \midrule
-maph & 97 & 1,024 & 2.85× \\
-std::unordered\_map & 34 & 359 & 1.00× \\
+maph & 97 & 1,024 & 2.85$\times$ \\
+std::unordered\_map & 34 & 359 & 1.00$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-maph uses 2.85× more memory than std::unordered\_map due to fixed 512-byte slots versus variable-size allocations. This overhead is the price paid for predictable memory layout and efficient memory-mapped I/O. For applications requiring persistence and multi-process sharing, this trade-off is acceptable.
+maph uses 2.85$\times$ more memory than std::unordered\_map due to fixed 512-byte slots versus variable-size allocations. This overhead is the price paid for predictable memory layout and efficient memory-mapped I/O. For applications requiring persistence and multi-process sharing, this trade-off is acceptable.
 
 \subsection{Discussion}
 
@@ -556,8 +712,8 @@ The experimental results demonstrate that maph achieves its primary design goals
 
 \begin{itemize}
 \item \textbf{Sub-microsecond latency}: Median GET latency of 351ns validates the efficiency of memory-mapped perfect hashing
-\item \textbf{Linear scalability}: 4.42× speedup on 4 cores shows effective lock-free design
-\item \textbf{Fast writes}: 1.88× faster bulk inserts than std::unordered\_map demonstrates the efficiency of mmap for write operations
+\item \textbf{Linear scalability}: 4.42$\times$ speedup on 4 cores shows effective lock-free design
+\item \textbf{Fast writes}: 1.88$\times$ faster bulk inserts than std::unordered\_map demonstrates the efficiency of mmap for write operations
 \item \textbf{Predictable tail latency}: p99.99 under 10 microseconds enables use in latency-sensitive applications
 \end{itemize}
 
@@ -565,7 +721,7 @@ However, the results also reveal important trade-offs:
 
 \begin{itemize}
 \item \textbf{Read performance vs. in-memory structures}: std::unordered\_map achieves lower read latency (30ns vs 50ns median) due to superior cache locality
-\item \textbf{Memory overhead}: 2.85× higher memory usage is the cost of fixed-size slots
+\item \textbf{Memory overhead}: 2.85$\times$ higher memory usage is the cost of fixed-size slots
 \item \textbf{Scalability limits}: Efficiency drops to 80\% at 8 threads due to memory bandwidth saturation
 \end{itemize}
 
@@ -578,8 +734,8 @@ These trade-offs position maph as optimal for workloads that prioritize write th
 
 While maph achieves exceptional performance for its target use cases, several limitations must be acknowledged:
 
-\subsubsection{Fixed Slot Size}
-The 512-byte slot size optimizes for predictable latency but wastes space for small values. Applications with predominantly small values (e.g., counters, flags) experience up to 90\% space overhead. Variable-size allocation would improve space efficiency but complicate memory management and destroy performance predictability.
+\subsubsection{Fixed Slot Size Per Instantiation}
+Each storage instantiation uses a fixed slot size chosen at compile time. While the size is configurable (\texttt{mmap\_storage<SlotSize>}), it remains constant for a given database file. Applications with heterogeneous value sizes may experience space overhead—for example, the default 512-byte slots waste space for small counters. Variable-size allocation would improve space efficiency but would complicate memory management and destroy performance predictability. Applications can mitigate this by choosing appropriate slot sizes for their workload or using multiple stores with different slot sizes.
 
 \subsubsection{Dynamic Key Sets}
 The perfect hash optimization provides O(1) lookups only for keys in the original dataset. New keys use standard FNV-1a hashing with linear probing, which may experience degraded performance if the table becomes full. Workloads with highly dynamic key sets must provision sufficient slots or periodically rebuild the perfect hash function.
@@ -594,8 +750,8 @@ While mmap provides durability, it does not guarantee crash consistency for mult
 
 Several avenues for future research could address current limitations and expand applicability:
 
-\subsubsection{Adaptive Slot Sizing}
-Dynamic slot allocation based on value size distribution could improve space efficiency while maintaining performance. A hybrid approach with multiple slot classes (64B, 512B, 4KB) selected based on value size could reduce waste.
+\subsubsection{Runtime-Adaptive Slot Sizing}
+While maph currently supports compile-time slot size selection, runtime-adaptive slot allocation could further improve space efficiency. A hybrid approach with multiple slot classes (64B, 512B, 4KB) dynamically selected based on value size could reduce waste while maintaining predictability. This would require metadata to track slot classes and complicate the memory layout but could benefit workloads with highly variable value sizes.
 
 \subsubsection{Learned Indexing}
 Machine learning models could replace perfect hash functions, learning the key distribution online~\cite{learned-index}. Neural networks or decision trees could provide better collision rates than traditional hash functions for skewed distributions.
@@ -623,14 +779,14 @@ These principles apply broadly to system design in the microsecond era, from net
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented maph, a memory-mapped key-value store achieving sub-microsecond latency through novel integration of memory mapping, perfect hashing, and lock-free algorithms. Our evaluation demonstrates 10M operations per second single-threaded and 98M operations per second with 16 threads, outperforming Redis by 12× and RocksDB by 87×.
+We presented maph, a memory-mapped key-value store achieving sub-microsecond latency through novel integration of memory mapping, perfect hashing, and lock-free algorithms. Our evaluation demonstrates 10M operations per second single-threaded and 98M operations per second with 16 threads, outperforming Redis by 12$\times$ and RocksDB by 87$\times$.
 
 The key technical contributions enabling this performance are:
 \begin{itemize}
 \item Zero-copy architecture via mmap eliminating kernel overhead
 \item Dual-region design with 80\% perfect-hashed slots for O(1) guarantees
 \item Lock-free atomic operations enabling linear scalability
-\item SIMD optimization providing 5× throughput for batch operations
+\item SIMD optimization providing 5$\times$ throughput for batch operations
 \end{itemize}
 
 maph is particularly suitable for applications requiring predictable ultra-low latency, including high-frequency trading, machine learning serving, and real-time gaming. While limitations exist—notably fixed slot sizes and single-machine operation—the design principles and techniques are broadly applicable to microsecond-scale systems.

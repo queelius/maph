@@ -7,29 +7,32 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-# Maph comprehensive tests
-add_executable(test_maph
-    test_maph.cpp
-)
+# ===== ARCHIVED v1/v2 TESTS (commented out - moved to archive/) =====
+# These tests were for older maph versions and have been archived
 
-target_link_libraries(test_maph
-    PRIVATE
-    maph
-    Catch2::Catch2WithMain
-    pthread
-)
-
-# Perfect hash comprehensive tests
-add_executable(test_perfect_hash_comprehensive
-    test_perfect_hash_comprehensive.cpp
-)
-
-target_link_libraries(test_perfect_hash_comprehensive
-    PRIVATE
-    maph
-    Catch2::Catch2WithMain
-    pthread
-)
+# # Maph comprehensive tests
+# add_executable(test_maph
+#     test_maph.cpp
+# )
+#
+# target_link_libraries(test_maph
+#     PRIVATE
+#     maph
+#     Catch2::Catch2WithMain
+#     pthread
+# )
+#
+# # Perfect hash comprehensive tests
+# add_executable(test_perfect_hash_comprehensive
+#     test_perfect_hash_comprehensive.cpp
+# )
+#
+# target_link_libraries(test_perfect_hash_comprehensive
+#     PRIVATE
+#     maph
+#     Catch2::Catch2WithMain
+#     pthread
+# )
 
 # Benchmark performance tests
 add_executable(test_benchmark_performance
@@ -43,41 +46,56 @@ target_link_libraries(test_benchmark_performance
     pthread
 )
 
-# Ultra hash benchmarks
-add_executable(bench_ultra_hash
-    bench_ultra_hash.cpp
-)
-
-target_link_libraries(bench_ultra_hash
-    PRIVATE
-    maph
-    pthread
-)
-
-# Enable OpenMP if available
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(bench_ultra_hash PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-target_compile_options(bench_ultra_hash PRIVATE -march=native -O3 -mavx2)
-target_include_directories(bench_ultra_hash PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_compile_features(bench_ultra_hash PRIVATE cxx_std_17)
-
-target_include_directories(test_maph PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_compile_features(test_maph PRIVATE cxx_std_17)
-
-target_include_directories(test_perfect_hash_comprehensive PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_compile_features(test_perfect_hash_comprehensive PRIVATE cxx_std_17)
+# # Ultra hash benchmarks
+# add_executable(bench_ultra_hash
+#     bench_ultra_hash.cpp
+# )
+#
+# target_link_libraries(bench_ultra_hash
+#     PRIVATE
+#     maph
+#     pthread
+# )
+#
+# # Enable OpenMP if available
+# if(OpenMP_CXX_FOUND)
+#     target_link_libraries(bench_ultra_hash PRIVATE OpenMP::OpenMP_CXX)
+# endif()
+#
+# target_compile_options(bench_ultra_hash PRIVATE -march=native -O3 -mavx2)
+# target_include_directories(bench_ultra_hash PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# target_compile_features(bench_ultra_hash PRIVATE cxx_std_17)
+#
+# target_include_directories(test_maph PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# target_compile_features(test_maph PRIVATE cxx_std_17)
+#
+# target_include_directories(test_perfect_hash_comprehensive PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# target_compile_features(test_perfect_hash_comprehensive PRIVATE cxx_std_17)
 
 target_include_directories(test_benchmark_performance PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_compile_features(test_benchmark_performance PRIVATE cxx_std_17)
 
+# REST API interoperability tests
+add_executable(test_rest_api_interop
+    test_rest_api_interop.cpp
+)
+
+target_link_libraries(test_rest_api_interop
+    PRIVATE
+    maph
+    Catch2::Catch2WithMain
+    pthread
+)
+
+target_include_directories(test_rest_api_interop PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_features(test_rest_api_interop PRIVATE cxx_std_23)
+
 # Enable coverage flags if building with coverage
 if(CMAKE_CXX_FLAGS MATCHES ".*--coverage.*")
-    target_compile_options(test_maph PRIVATE --coverage)
-    target_link_options(test_maph PRIVATE --coverage)
-    target_compile_options(test_perfect_hash_comprehensive PRIVATE --coverage)
-    target_link_options(test_perfect_hash_comprehensive PRIVATE --coverage)
+    # target_compile_options(test_maph PRIVATE --coverage)
+    # target_link_options(test_maph PRIVATE --coverage)
+    # target_compile_options(test_perfect_hash_comprehensive PRIVATE --coverage)
+    # target_link_options(test_perfect_hash_comprehensive PRIVATE --coverage)
     target_compile_options(test_benchmark_performance PRIVATE --coverage)
     target_link_options(test_benchmark_performance PRIVATE --coverage)
 endif()
@@ -85,9 +103,10 @@ endif()
 # Register tests with CTest
 include(CTest)
 include(Catch)
-catch_discover_tests(test_maph)
-catch_discover_tests(test_perfect_hash_comprehensive)
+# catch_discover_tests(test_maph)
+# catch_discover_tests(test_perfect_hash_comprehensive)
 catch_discover_tests(test_benchmark_performance)
+catch_discover_tests(test_rest_api_interop)
 
 # Temporarily disable old tests until migration is complete
 # add_executable(rd_ph_filter_tests
@@ -111,3 +130,7 @@ catch_discover_tests(test_benchmark_performance)
 # include(CTest)
 # include(Catch)
 # catch_discover_tests(rd_ph_filter_tests)
+
+# ===== MAPH v3 TESTS =====
+# Add v3 test subdirectory with comprehensive test suite
+add_subdirectory(v3)
