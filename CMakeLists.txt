@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
 project(maph VERSION 2.0.0 LANGUAGES CXX)
 
-# C++17 required
-set(CMAKE_CXX_STANDARD 17)
+# C++23 required for v3 (concepts, std::expected)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -22,45 +22,49 @@ else()
     message(STATUS "OpenMP not found - parallel optimizations will be disabled")
 endif()
 
-# Header-only library
+# Header-only library (v3)
 add_library(maph INTERFACE)
-target_include_directories(maph INTERFACE 
+target_include_directories(maph INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+target_compile_features(maph INTERFACE cxx_std_23)  # v3 requires C++23 for std::expected
 
-# CLI executable
-add_executable(maph_cli src/maph_cli.cpp)
-target_link_libraries(maph_cli PRIVATE maph)
-target_include_directories(maph_cli PRIVATE include)
-set_target_properties(maph_cli PROPERTIES OUTPUT_NAME maph)
+# CLI executable (TODO: update to v3)
+# add_executable(maph_cli src/maph_cli.cpp)
+# target_link_libraries(maph_cli PRIVATE maph)
+# target_include_directories(maph_cli PRIVATE include)
+# set_target_properties(maph_cli PROPERTIES OUTPUT_NAME maph)
 
 # Installation
-install(TARGETS maph_cli DESTINATION bin)
-install(FILES include/maph.hpp DESTINATION include)
+# install(TARGETS maph_cli DESTINATION bin)
+install(DIRECTORY include/maph/v3 DESTINATION include/maph)
 
-# Tests
+# Tests (v3)
 option(BUILD_TESTS "Build tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
-    
-    # Benchmark executable
-    add_executable(bench_maph tests/bench_maph.cpp)
-    target_link_libraries(bench_maph PRIVATE maph pthread)
-    target_include_directories(bench_maph PRIVATE include)
+endif()
 
-    # Link OpenMP if found
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(bench_maph PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+# Benchmarks (v3)
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
 
-    # Enable AVX2 if available
-    include(CheckCXXCompilerFlag)
-    CHECK_CXX_COMPILER_FLAG("-mavx2" COMPILER_SUPPORTS_AVX2)
-    if(COMPILER_SUPPORTS_AVX2)
-        target_compile_options(bench_maph PRIVATE -mavx2)
-    endif()
+# Examples (v3)
+option(BUILD_EXAMPLES "Build examples" OFF)
+if(BUILD_EXAMPLES)
+    # V3 demo
+    add_executable(v3_demo examples/v3_demo.cpp)
+    target_link_libraries(v3_demo PRIVATE maph)
+    target_include_directories(v3_demo PRIVATE include)
+
+    # V3 simple test
+    add_executable(v3_simple_test examples/v3_simple_test.cpp)
+    target_link_libraries(v3_simple_test PRIVATE maph)
+    target_include_directories(v3_simple_test PRIVATE include)
 endif()
 
 # Integrations
