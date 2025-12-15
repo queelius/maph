@@ -7,14 +7,14 @@
  */
 
 #include "benchmark_utils.hpp"
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <atomic>
 #include <barrier>
 
-using namespace maph::v3;
+using namespace maph;
 using namespace maph::bench;
 
 // Shared state for multi-threaded benchmarking

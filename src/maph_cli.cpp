@@ -15,7 +15,7 @@
  * @version 1.0.0
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <fstream>
 #include <chrono>

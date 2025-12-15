@@ -169,5 +169,5 @@ This document summarizes all changes made to `maph_technical_report.tex` to addr
 ## Files Created
 
 - `/home/spinoza/github/beta/maph/benchmarks/*` (benchmark suite)
-- `/home/spinoza/github/beta/maph/archive/` (obsolete code)
+- Historical v1/v2 code preserved in git history (tags v1.0.0, branch v2.0.1)
 - This summary document

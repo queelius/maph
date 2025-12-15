@@ -1,6 +1,6 @@
 /**
  * @file maph.hpp
- * @brief Main header for maph v3 - composable perfect hash tables
+ * @brief Main header for maph - composable perfect hash tables
  *
  * This is the primary interface that brings together all components
  * in a clean, composable way. Each piece does one thing well.
@@ -15,18 +15,15 @@
 #include "optimization.hpp"
 #include <memory>
 
-namespace maph::v3 {
+namespace maph {
 
-// Configuration follows builder pattern for clarity
+// Configuration struct - aggregate type to allow designated initializers
 struct maph_config {
     slot_count slots{1000};
     size_t max_probes{10};
     bool enable_journal{true};
     bool enable_cache{false};
     size_t cache_size{1000};
-
-    maph_config() = default;
-    explicit maph_config(slot_count s) : slots(s) {}
 };
 
 /**
@@ -326,20 +323,32 @@ auto operator|(Storage&& storage, cache_op op) {
 
 } // namespace pipeline
 
-} // namespace maph::v3
+// ===== FREE FUNCTION WRAPPERS =====
+// These enable `maph::create()` and `maph::create_memory()` syntax
 
-// ===== CONVENIENCE ALIASES =====
-
-namespace maph {
-    using v3::maph;
-    using v3::error;
-    using v3::slot_count;
-    using v3::slot_index;
-    using v3::hash_value;
-
-    // Template aliases need to be redefined, not imported
-    template<typename T>
-    using result = v3::result<T>;
-
-    using status = v3::status;
+/**
+ * @brief Create a new memory-mapped database
+ */
+[[nodiscard]] inline result<maph> create(
+    const std::filesystem::path& path,
+    maph_config cfg = maph_config{}) {
+    return maph::create(path, cfg);
 }
+
+/**
+ * @brief Create an in-memory database
+ */
+[[nodiscard]] inline maph create_memory(maph_config cfg = maph_config{}) {
+    return maph::create_memory(cfg);
+}
+
+/**
+ * @brief Open an existing database
+ */
+[[nodiscard]] inline result<maph> open(
+    const std::filesystem::path& path,
+    bool readonly = false) {
+    return maph::open(path, readonly);
+}
+
+} // namespace maph

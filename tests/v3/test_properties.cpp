@@ -1,6 +1,6 @@
 /**
  * @file test_properties.cpp
- * @brief Property-based tests for maph v3 - testing invariants and mathematical properties
+ * @brief Property-based tests for maph - testing invariants and mathematical properties
  *
  * These tests verify that fundamental properties and invariants hold across
  * different inputs and configurations:
@@ -16,10 +16,10 @@
 #include <catch2/generators/catch_generators_adapters.hpp>
 #include <catch2/generators/catch_generators_random.hpp>
 
-#include "maph/v3/maph.hpp"
-#include "maph/v3/hashers.hpp"
-#include "maph/v3/storage.hpp"
-#include "maph/v3/table.hpp"
+#include <maph/maph.hpp>
+#include <maph/hashers.hpp>
+#include <maph/storage.hpp>
+#include <maph/table.hpp>
 #include <vector>
 #include <string>
 #include <unordered_set>
@@ -28,7 +28,7 @@
 #include <filesystem>
 #include <cmath>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== PROPERTY GENERATORS =====
 

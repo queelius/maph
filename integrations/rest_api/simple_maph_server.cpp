@@ -8,7 +8,7 @@
  * - Simple metrics and statistics
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <microhttpd.h>
 #include <string>
 #include <memory>

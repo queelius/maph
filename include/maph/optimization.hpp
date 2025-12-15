@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <unordered_map>
 
-namespace maph::v3 {
+namespace maph {
 
 /**
  * @class optimizer
@@ -238,4 +238,4 @@ auto with_journal(Table&& t) {
     };
 }
 
-} // namespace maph::v3
+} // namespace maph

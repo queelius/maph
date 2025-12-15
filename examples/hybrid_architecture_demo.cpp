@@ -20,13 +20,13 @@
  *   - 5,000× faster!
  */
 
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <iomanip>
 
-using namespace maph::v3;
+using namespace maph;
 
 // Measure operation latency
 template<typename F>

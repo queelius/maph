@@ -11,7 +11,7 @@
 #include <ranges>
 #include <coroutine>
 
-namespace maph::v3 {
+namespace maph {
 
 /**
  * @class hash_table
@@ -275,4 +275,4 @@ inline auto make_memory_table(slot_count slots) {
     );
 }
 
-} // namespace maph::v3
+} // namespace maph

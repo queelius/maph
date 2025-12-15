@@ -1,6 +1,6 @@
 /**
  * @file test_hashers.cpp
- * @brief Comprehensive tests for maph v3 hash functions
+ * @brief Comprehensive tests for maph hash functions
  *
  * Tests focus on behavioral contracts for each hasher type:
  * - Deterministic behavior
@@ -14,14 +14,14 @@
 #include <catch2/matchers/catch_matchers_range.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 
-#include "maph/v3/hashers.hpp"
+#include <maph/hashers.hpp>
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== FNV1A HASHER TESTS =====
 // Test the FNV-1a hash function implementation

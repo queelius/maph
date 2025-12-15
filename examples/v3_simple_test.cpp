@@ -3,11 +3,11 @@
  * @brief Simple test to verify v3 compiles and runs
  */
 
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <filesystem>
 
-using namespace maph::v3;
+using namespace maph;
 
 int main() {
     std::cout << "=== maph v3 Simple Test ===\n\n";

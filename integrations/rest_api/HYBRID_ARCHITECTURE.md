@@ -314,7 +314,7 @@ chmod 644 /var/lib/maph/data/*.maph
 
 ```cpp
 // web_server.cpp - High-performance web server
-#include "maph/v3/maph.hpp"
+#include "maph/maph.hpp"
 #include <iostream>
 
 int main() {
@@ -560,4 +560,4 @@ The hybrid architecture provides:
 **Related Documentation:**
 - `README.md` - REST API reference
 - `PERFECT_HASH.md` - Perfect hash optimization
-- `../include/maph/v3/storage.hpp` - mmap implementation
+- `../include/maph/storage.hpp` - mmap implementation

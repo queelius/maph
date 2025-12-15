@@ -3,7 +3,7 @@
  * @brief Comprehensive benchmarks for maph performance
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <chrono>
 #include <random>

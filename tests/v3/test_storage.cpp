@@ -1,6 +1,6 @@
 /**
  * @file test_storage.cpp
- * @brief Comprehensive tests for maph v3 storage backends
+ * @brief Comprehensive tests for maph storage backends
  *
  * Tests focus on storage backend contracts:
  * - Data persistence and integrity
@@ -12,9 +12,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_adapters.hpp>
+#include <catch2/generators/catch_generators_random.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 
-#include "maph/v3/storage.hpp"
+#include <maph/storage.hpp>
 #include <thread>
 #include <vector>
 #include <filesystem>
@@ -22,7 +24,7 @@
 #include <random>
 #include <algorithm>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== TEST UTILITIES =====
 
@@ -59,7 +61,7 @@ TEST_CASE("heap_storage basic operations", "[storage][heap]") {
     heap_storage<512> storage{count};
 
     SECTION("Initial state") {
-        REQUIRE(storage.slot_count().value == count.value);
+        REQUIRE(storage.get_slot_count().value == count.value);
 
         // All slots should be empty initially
         for (uint64_t i = 0; i < count.value; ++i) {
@@ -159,7 +161,7 @@ TEST_CASE("heap_storage basic operations", "[storage][heap]") {
 TEST_CASE("heap_storage different slot sizes", "[storage][heap][templates]") {
     SECTION("Small slots") {
         heap_storage<256> small_storage{slot_count{10}};
-        REQUIRE(small_storage.slot_count().value == 10);
+        REQUIRE(small_storage.get_slot_count().value == 10);
 
         slot_index idx{0};
         std::string small_data(200, 'S');  // Should fit
@@ -173,7 +175,7 @@ TEST_CASE("heap_storage different slot sizes", "[storage][heap][templates]") {
 
     SECTION("Large slots") {
         heap_storage<4096> large_storage{slot_count{5}};
-        REQUIRE(large_storage.slot_count().value == 5);
+        REQUIRE(large_storage.get_slot_count().value == 5);
 
         slot_index idx{0};
         std::string large_data(4000, 'L');  // Should fit in large slot
@@ -200,7 +202,7 @@ TEST_CASE("mmap_storage creation and basic operations", "[storage][mmap]") {
         REQUIRE(create_result.has_value());
 
         auto& storage = *create_result;
-        REQUIRE(storage.slot_count().value == count.value);
+        REQUIRE(storage.get_slot_count().value == count.value);
 
         // File should exist
         REQUIRE(std::filesystem::exists(test_path));
@@ -229,7 +231,7 @@ TEST_CASE("mmap_storage creation and basic operations", "[storage][mmap]") {
             auto storage = mmap_storage<>::open(test_path, false);
             REQUIRE(storage.has_value());
 
-            REQUIRE(storage->slot_count().value == count.value);
+            REQUIRE(storage->get_slot_count().value == count.value);
             REQUIRE_FALSE(storage->empty(test_idx));
             REQUIRE(storage->hash_at(test_idx).value == test_hash.value);
 
@@ -495,7 +497,7 @@ TEST_CASE("cached_storage basic functionality", "[storage][cached]") {
     }
 
     SECTION("Passthrough operations") {
-        REQUIRE(cached.slot_count().value == 100);  // Should match backend
+        REQUIRE(cached.get_slot_count().value == 100);  // Should match backend
     }
 }
 
@@ -534,47 +536,44 @@ TEST_CASE("cached_storage with different backends", "[storage][cached][compositi
 // Test storage backend invariants
 
 TEST_CASE("Storage backend properties", "[storage][properties]") {
-    auto backend_type = GENERATE(0, 1);  // 0=heap, 1=mmap
     slot_count count{20};
 
     SECTION("Write-read consistency property") {
-        // Create storage based on type
-        if (backend_type == 0) {
-            heap_storage<512> storage{count};
+        heap_storage<512> storage{count};
 
-            auto slot_idx = GENERATE(take(10, random(0ULL, count.value - 1)));
-            auto hash_val = GENERATE(take(5, random(1ULL, 10000ULL)));
-
-            slot_index idx{slot_idx};
-            hash_value hash{hash_val};
-            std::string data = "property_test_" + std::to_string(hash_val);
+        // Test multiple slots with different hash values
+        for (uint64_t i = 0; i < 10; ++i) {
+            slot_index idx{i};
+            hash_value hash{i + 1000};
+            std::string data = "property_test_" + std::to_string(i);
 
             auto write_result = storage.write(idx, hash, make_test_data(data));
-            if (write_result.has_value()) {
-                auto read_result = storage.read(idx);
-                REQUIRE(read_result.has_value());
-                REQUIRE(extract_string(read_result) == data);
-                REQUIRE(storage.hash_at(idx).value == hash.value);
-                REQUIRE_FALSE(storage.empty(idx));
-            }
+            REQUIRE(write_result.has_value());
+
+            auto read_result = storage.read(idx);
+            REQUIRE(read_result.has_value());
+            REQUIRE(extract_string(read_result) == data);
+            REQUIRE(storage.hash_at(idx).value == hash.value);
+            REQUIRE_FALSE(storage.empty(idx));
         }
     }
 
     SECTION("Clear consistency property") {
         heap_storage<512> storage{count};
 
-        auto slot_idx = GENERATE(take(5, random(0ULL, count.value - 1)));
-        slot_index idx{slot_idx};
+        for (uint64_t i = 0; i < 5; ++i) {
+            slot_index idx{i};
 
-        // Write something first
-        storage.write(idx, hash_value{999}, make_test_data("clear_test"));
-        REQUIRE_FALSE(storage.empty(idx));
+            // Write something first
+            (void)storage.write(idx, hash_value{999}, make_test_data("clear_test"));
+            REQUIRE_FALSE(storage.empty(idx));
 
-        // Clear and verify
-        auto clear_result = storage.clear(idx);
-        REQUIRE(clear_result.has_value());
-        REQUIRE(storage.empty(idx));
-        REQUIRE_FALSE(storage.read(idx).has_value());
+            // Clear and verify
+            auto clear_result = storage.clear(idx);
+            REQUIRE(clear_result.has_value());
+            REQUIRE(storage.empty(idx));
+            REQUIRE_FALSE(storage.read(idx).has_value());
+        }
     }
 }
 

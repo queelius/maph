@@ -8,7 +8,7 @@
  * 3. Performance comparison
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <vector>
 #include <string>

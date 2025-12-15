@@ -38,7 +38,7 @@ target_compile_features(maph INTERFACE cxx_std_23)  # v3 requires C++23 for std:
 
 # Installation
 # install(TARGETS maph_cli DESTINATION bin)
-install(DIRECTORY include/maph/v3 DESTINATION include/maph)
+install(DIRECTORY include/maph DESTINATION include/maph)
 
 # Tests (v3)
 option(BUILD_TESTS "Build tests" OFF)

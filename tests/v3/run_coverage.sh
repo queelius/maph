@@ -177,7 +177,7 @@ generate_coverage_data() {
 
     # Extract only v3 headers for focused analysis
     lcov --extract "../$COVERAGE_DIR/coverage_filtered.info" \
-        '*/include/maph/v3/*' \
+        '*/include/maph/*' \
         --output-file "../$COVERAGE_DIR/coverage_v3.info"
 
     cd ..
@@ -311,7 +311,7 @@ perform_detailed_analysis() {
             file_coverage=$(lcov --list "$COVERAGE_DIR/coverage_v3.info" | grep "$file" || echo "Not found")
             echo "$file_coverage" >> "$COVERAGE_DIR/coverage_detailed.txt"
         fi
-    done < <(find include/maph/v3 -name "*.hpp" 2>/dev/null || true)
+    done < <(find include/maph -name "*.hpp" 2>/dev/null || true)
 }
 
 generate_ci_report() {

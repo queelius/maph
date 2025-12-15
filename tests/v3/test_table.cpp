@@ -1,6 +1,6 @@
 /**
  * @file test_table.cpp
- * @brief Comprehensive tests for maph v3 hash table implementation
+ * @brief Comprehensive tests for maph hash table implementation
  *
  * Tests focus on the composable hash table design:
  * - Basic hash table operations (get, set, remove)
@@ -16,15 +16,16 @@
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include "maph/v3/table.hpp"
-#include "maph/v3/hashers.hpp"
-#include "maph/v3/storage.hpp"
+#include <maph/table.hpp>
+#include <maph/hashers.hpp>
+#include <maph/storage.hpp>
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
 #include <filesystem>
+#include <random>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== TEST UTILITIES =====
 

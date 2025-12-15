@@ -6,20 +6,20 @@
  * Each component does one thing well and can be composed orthogonally.
  */
 
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <string>
 #include <chrono>
 #include <filesystem>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== EXAMPLE 1: SIMPLE USAGE =====
 void example_simple_api() {
     std::cout << "\n=== Example 1: Simple, Clean API ===\n";
 
     // Create a database with clear intent
-    auto db_result = maph::v3::maph::create("demo.maph", {.slots = slot_count{10000}});
+    auto db_result = maph::maph::create("demo.maph", {.slots = slot_count{10000}});
     if (!db_result) {
         std::cerr << "Failed to create database\n";
         return;
@@ -60,7 +60,7 @@ void example_composable_storage() {
     std::cout << "\n=== Example 2: Composable Storage Backends ===\n";
 
     // In-memory storage for testing
-    auto memory_db = maph::v3::maph::create_memory({
+    auto memory_db = maph::maph::create_memory({
         .slots = slot_count{1000},
         .enable_cache = true,
         .cache_size = 100
@@ -70,7 +70,7 @@ void example_composable_storage() {
     memory_db.set("test:2", "value2");
 
     // Memory-mapped storage for production
-    if (auto mmap_result = maph::v3::maph::create("prod.maph", {.slots = slot_count{100000}})) {
+    if (auto mmap_result = maph::maph::create("prod.maph", {.slots = slot_count{100000}})) {
         auto& prod_db = *mmap_result;
         prod_db.set("prod:key", "prod:value");
     }
@@ -143,7 +143,7 @@ void example_perfect_optimization() {
 void example_batch_operations() {
     std::cout << "\n=== Example 5: Batch Operations ===\n";
 
-    auto db = maph::v3::maph::create_memory({.slots = slot_count{1000}});
+    auto db = maph::maph::create_memory({.slots = slot_count{1000}});
 
     // Transactional batch insert
     auto status = db.set_all({
@@ -173,7 +173,7 @@ void example_error_handling() {
     std::cout << "\n=== Example 6: Elegant Error Handling ===\n";
 
     // Try to open non-existent file
-    auto result = maph::v3::maph::open("/nonexistent/path.maph");
+    auto result = maph::maph::open("/nonexistent/path.maph");
 
     if (!result) {
         switch (result.error()) {
@@ -189,7 +189,7 @@ void example_error_handling() {
     }
 
     // Monadic error chaining
-    auto db = maph::v3::maph::create_memory();
+    auto db = maph::maph::create_memory();
 
     db.set("key", "value")
       .and_then([&](auto) { return db.set("key2", "value2"); })

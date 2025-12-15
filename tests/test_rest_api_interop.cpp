@@ -9,12 +9,12 @@
  * 4. Both can coexist safely with proper patterns
  */
 
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
 
-using namespace maph::v3;
+using namespace maph;
 
 TEST_CASE("C++ writes, C++ reads same process", "[interop][basic]") {
     auto test_path = std::filesystem::temp_directory_path() / "test_cpp_rw.maph";

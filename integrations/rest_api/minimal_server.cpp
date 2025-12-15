@@ -6,7 +6,7 @@
  * Uses basic socket programming - production use should use a proper HTTP library.
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <string>
 #include <sstream>

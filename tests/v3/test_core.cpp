@@ -1,6 +1,6 @@
 /**
  * @file test_core.cpp
- * @brief Comprehensive tests for maph v3 core types and concepts
+ * @brief Comprehensive tests for maph core types and concepts
  *
  * Tests focus on behavior contracts rather than implementation details.
  * These tests should remain valid even if the internal implementation changes.
@@ -11,13 +11,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
 
-#include "maph/v3/core.hpp"
+#include <maph/core.hpp>
 #include <type_traits>
 #include <thread>
 #include <vector>
 #include <string_view>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== STRONG TYPES TESTS =====
 // Test that strong types behave correctly and prevent primitive obsession
@@ -386,7 +386,7 @@ struct mock_storage {
         return {};
     }
     slot_count slot_count() const {
-        return maph::v3::slot_count{100};
+        return maph::slot_count{100};
     }
 };
 

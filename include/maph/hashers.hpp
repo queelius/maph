@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace maph::v3 {
+namespace maph {
 
 // ===== STANDARD HASH FUNCTIONS =====
 
@@ -302,4 +302,4 @@ inline result<minimal_perfect_hasher> minimal_perfect_hasher::deserialize(std::s
     return std::unexpected(error::invalid_format);
 }
 
-} // namespace maph::v3
+} // namespace maph

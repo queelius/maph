@@ -5,16 +5,19 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include <filesystem>
 #include <random>
 #include <chrono>
+#include <memory>
 #include <vector>
 #include <string>
 #include <iostream>
 #include <iomanip>
 
 using namespace maph;
+using Maph = maph::maph;
+using JsonView = std::string_view;
 namespace fs = std::filesystem;
 
 class BenchmarkFixture {
@@ -63,8 +66,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Lookup Performance Comparison", "
     const size_t DATASET_SIZE = 10000;
     const size_t LOOKUP_COUNT = 1000;
     
-    db = Maph::create(test_file, DATASET_SIZE * 2);
-    REQUIRE(db != nullptr);
+    Maph::config cfg{slot_count{DATASET_SIZE * 2}};
+    auto created = Maph::create(test_file, cfg);
+    REQUIRE(created.has_value());
+    db = std::make_unique<Maph>(std::move(created.value()));
     
     prepare_dataset(DATASET_SIZE);
     populate_database();
@@ -89,7 +94,7 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Lookup Performance Comparison", "
     
     // Now optimize the database
     auto opt_result = db->optimize();
-    REQUIRE(opt_result.ok());
+    REQUIRE(opt_result.has_value());
     
     SECTION("Perfect Hash (After Optimization)") {
         BENCHMARK("Lookup - Perfect Hash") {
@@ -106,8 +111,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Insert Performance", "[benchmark]
     const size_t INSERT_COUNT = 5000;
     
     SECTION("Sequential Inserts") {
-        db = Maph::create(test_file, INSERT_COUNT * 2);
-        REQUIRE(db != nullptr);
+        Maph::config cfg{slot_count{INSERT_COUNT * 2}};
+        auto created = Maph::create(test_file, cfg);
+        REQUIRE(created.has_value());
+        db = std::make_unique<Maph>(std::move(created.value()));
         prepare_dataset(INSERT_COUNT);
         
         BENCHMARK("Sequential Insert") {
@@ -118,8 +125,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Insert Performance", "[benchmark]
     }
     
     SECTION("Random Inserts") {
-        db = Maph::create(test_file, INSERT_COUNT * 2);
-        REQUIRE(db != nullptr);
+        Maph::config cfg{slot_count{INSERT_COUNT * 2}};
+        auto created = Maph::create(test_file, cfg);
+        REQUIRE(created.has_value());
+        db = std::make_unique<Maph>(std::move(created.value()));
         prepare_dataset(INSERT_COUNT);
         
         std::mt19937 rng(42);
@@ -142,8 +151,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Batch Operations", "[benchmark][p
     const size_t DATASET_SIZE = 10000;
     const size_t BATCH_SIZE = 1000;
     
-    db = Maph::create(test_file, DATASET_SIZE * 2);
-    REQUIRE(db != nullptr);
+    Maph::config cfg{slot_count{DATASET_SIZE * 2}};
+    auto created = Maph::create(test_file, cfg);
+    REQUIRE(created.has_value());
+    db = std::make_unique<Maph>(std::move(created.value()));
     
     prepare_dataset(DATASET_SIZE);
     populate_database();
@@ -156,7 +167,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Batch Operations", "[benchmark][p
     
     SECTION("Batch Set - Standard Hash") {
         BENCHMARK("Batch Set (1000 items)") {
-            return db->mset(batch_kvs);
+            for (const auto& [k, v] : batch_kvs) {
+                db->set(k, v);
+            }
+            return 0;
         };
     }
     
@@ -164,7 +178,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Batch Operations", "[benchmark][p
     
     SECTION("Batch Set - After Optimization") {
         BENCHMARK("Batch Set After Opt (1000 items)") {
-            return db->mset(batch_kvs);
+            for (const auto& [k, v] : batch_kvs) {
+                db->set(k, v);
+            }
+            return 0;
         };
     }
     
@@ -176,9 +193,13 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Batch Operations", "[benchmark][p
         
         size_t found_count = 0;
         BENCHMARK("Batch Get (1000 items)") {
-            db->mget(batch_keys, [&found_count](JsonView key, JsonView value) {
-                found_count++;
-            });
+            size_t found_count = 0;
+            for (auto key : batch_keys) {
+                auto v = db->get(key);
+                if (v.has_value()) {
+                    ++found_count;
+                }
+            }
             return found_count;
         };
     }
@@ -196,8 +217,10 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Optimization Process", "[benchmar
     
     for (size_t size : dataset_sizes) {
         cleanup();
-        db = Maph::create(test_file, size * 2);
-        REQUIRE(db != nullptr);
+        Maph::config cfg{slot_count{size * 2}};
+        auto created = Maph::create(test_file, cfg);
+        REQUIRE(created.has_value());
+        db = std::make_unique<Maph>(std::move(created.value()));
         
         prepare_dataset(size);
         
@@ -215,7 +238,7 @@ TEST_CASE_METHOD(BenchmarkFixture, "Benchmark: Optimization Process", "[benchmar
         auto opt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             opt_end - opt_start).count();
         
-        REQUIRE(result.ok());
+        REQUIRE(result.has_value());
         
         double keys_per_sec = opt_ms > 0 ? (size * 1000.0 / opt_ms) : 0;
         
@@ -233,8 +256,10 @@ TEST_CASE("Detailed Performance Analysis", "[.][analysis]") {
     const size_t SAMPLE_SIZE = 1000;
     
     std::string test_file = "/tmp/perf_analysis.maph";
-    auto db = Maph::create(test_file, DATASET_SIZE * 2);
-    REQUIRE(db != nullptr);
+    Maph::config cfg{slot_count{DATASET_SIZE * 2}};
+    auto db_result = Maph::create(test_file, cfg);
+    REQUIRE(db_result.has_value());
+    auto db = std::make_unique<Maph>(std::move(db_result.value()));
     
     // Generate dataset
     std::vector<std::string> keys, values;

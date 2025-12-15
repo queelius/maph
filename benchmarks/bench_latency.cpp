@@ -7,11 +7,11 @@
  */
 
 #include "benchmark_utils.hpp"
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <memory>
 
-using namespace maph::v3;
+using namespace maph;
 using namespace maph::bench;
 
 int main(int argc, char* argv[]) {

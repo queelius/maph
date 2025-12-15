@@ -1,6 +1,8 @@
 # Build directories
 build/
 build_test/
+build_bench/
+build_server/
 cmake-build-*/
 out/
 .build/
@@ -71,6 +73,37 @@ compile_commands.json
 docs/html/
 docs/latex/
 *.doxygen
+
+# LaTeX intermediate files
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fls
+*.fdb_latexmk
+*.lof
+*.log
+*.lot
+*.out
+*.toc
+*.synctex.gz
+*.synctex.gz(busy)
+*.nav
+*.snm
+*.vrb
+*.bcf
+*.run.xml
+*.idx
+*.ilg
+*.ind
+*.acn
+*.acr
+*.alg
+*.glg
+*.glo
+*.gls
+*.ist
+*.latexml.log
 
 # Test artifacts
 *.maph

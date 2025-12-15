@@ -304,8 +304,8 @@ Potential improvements for perfect hash support:
 
 ## References
 
-- **maph v3 source**: `include/maph/v3/hashers.hpp` (minimal_perfect_hasher)
-- **Optimization logic**: `include/maph/v3/optimization.hpp`
+- **maph v3 source**: `include/maph/hashers.hpp` (minimal_perfect_hasher)
+- **Optimization logic**: `include/maph/optimization.hpp`
 - **Hybrid hashing**: Combines perfect + fallback hash elegantly
 - **REST API endpoint**: Added in `integrations/rest_api/maph_server_v3.cpp:297`
 

@@ -5,7 +5,7 @@
  * Single-header HTTP library for easier compilation
  */
 
-#include "maph.hpp"
+#include <maph/maph.hpp>
 #include "httplib.h"
 #include <filesystem>
 #include <unordered_map>

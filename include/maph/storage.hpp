@@ -17,7 +17,7 @@
 #include <deque>
 #include <unordered_map>
 
-namespace maph::v3 {
+namespace maph {
 
 // ===== STORAGE POLICIES =====
 
@@ -29,7 +29,10 @@ namespace maph::v3 {
  */
 template<size_t SlotSize = 512>
 class heap_storage {
+public:
     using slot_type = slot<SlotSize>;
+
+private:
     std::vector<slot_type> slots_;
 
 public:
@@ -58,8 +61,8 @@ public:
         return {};
     }
 
-    [[nodiscard]] constexpr slot_count get_slot_count() const noexcept {
-        return v3::slot_count{slots_.size()};
+    [[nodiscard]] constexpr maph::slot_count get_slot_count() const noexcept {
+        return maph::slot_count{slots_.size()};
     }
 
     [[nodiscard]] bool empty(slot_index idx) const noexcept {
@@ -268,8 +271,8 @@ public:
         return {};
     }
 
-    [[nodiscard]] slot_count get_slot_count() const noexcept {
-        return v3::slot_count{header_->slot_count};
+    [[nodiscard]] maph::slot_count get_slot_count() const noexcept {
+        return maph::slot_count{header_->slot_count};
     }
 
     [[nodiscard]] bool empty(slot_index idx) const noexcept {
@@ -345,7 +348,7 @@ public:
         return backend_.clear(idx);
     }
 
-    [[nodiscard]] slot_count get_slot_count() const noexcept {
+    [[nodiscard]] maph::slot_count get_slot_count() const noexcept {
         return backend_.get_slot_count();
     }
 
@@ -362,4 +365,4 @@ public:
     }
 };
 
-} // namespace maph::v3
+} // namespace maph

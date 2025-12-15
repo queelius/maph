@@ -35,6 +35,11 @@ add_executable(bench_all bench_all.cpp)
 target_link_libraries(bench_all PRIVATE benchmark_utils)
 target_compile_options(bench_all PRIVATE -O3 -march=native)
 
+# Perfect hash comparison benchmark
+add_executable(bench_perfect_hash_compare bench_perfect_hash_compare.cpp)
+target_link_libraries(bench_perfect_hash_compare PRIVATE benchmark_utils)
+target_compile_options(bench_perfect_hash_compare PRIVATE -O3 -march=native)
+
 # Link OpenMP if available
 if(OpenMP_CXX_FOUND)
     target_link_libraries(bench_throughput PRIVATE OpenMP::OpenMP_CXX)

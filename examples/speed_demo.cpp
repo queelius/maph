@@ -3,7 +3,7 @@
  * @brief Demonstration of maph speed
  */
 
-#include "maph/maph.hpp"
+#include <maph/maph.hpp>
 #include <iostream>
 #include <chrono>
 #include <vector>

@@ -26,7 +26,7 @@
  *   curl http://localhost:9090/stores/test/keys/greeting
  */
 
-#include "maph/v3/maph.hpp"
+#include <maph/maph.hpp>
 #include <microhttpd.h>
 #include <string>
 #include <memory>
@@ -38,7 +38,7 @@
 #include <filesystem>
 #include <iostream>
 
-using maph_db = maph::v3::maph;
+using maph_db = maph::maph;
 
 // ===== JSON HELPERS =====
 
@@ -111,7 +111,7 @@ public:
         }
 
         auto path = data_dir_ / (name + ".maph");
-        maph_db::config cfg{maph::v3::slot_count{slots}};
+        maph_db::config cfg{maph::slot_count{slots}};
         cfg.enable_journal = true;
         cfg.max_probes = 20;
 

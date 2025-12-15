@@ -1,8 +1,8 @@
 /**
  * @file test_integration.cpp
- * @brief Integration tests for maph v3 - testing component interactions
+ * @brief Integration tests for maph - testing component interactions
  *
- * These tests verify that the v3 components work together correctly:
+ * These tests verify that the components work together correctly:
  * - High-level maph interface integration
  * - Optimization and journaling workflows
  * - Complex composition scenarios
@@ -14,15 +14,15 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 
-#include "maph/v3/maph.hpp"
-#include "maph/v3/optimization.hpp"
+#include <maph/maph.hpp>
+#include <maph/optimization.hpp>
 #include <filesystem>
 #include <thread>
 #include <vector>
 #include <random>
 #include <algorithm>
 
-using namespace maph::v3;
+using namespace maph;
 
 // ===== TEST UTILITIES =====
 

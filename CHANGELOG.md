@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2024-12-14
+
 ### Added
+- **Hybrid Perfect Hash with Overflow Handling**: All perfect hash algorithms (RecSplit, CHD, BBHash, PTHash, FCH) now support graceful overflow handling
+  - Keys that cannot be perfectly hashed fall back to fingerprint-based linear search
+  - Build operations never fail - they always produce a valid hasher
+  - New `perfect_count()` and `overflow_count()` statistics to track placement efficiency
+  - Fingerprint verification ensures correctness for both perfect and overflow keys
+- Comprehensive perfect hash test suite (96 test cases across all algorithms)
+- Extended perfect hash tests with edge cases and stress testing
+
+### Changed
+- Perfect hash builders now always succeed, placing overflow keys in a fallback structure
+- Unified v3 references in documentation - removed obsolete version prefixes from docstrings
+- Improved RecSplit bits-per-key threshold for small key sets (accounts for fixed overhead)
+
+### Fixed
+- FCH algorithm stability with large bucket sizes
+- RecSplit and CHD `hash()` methods now correctly handle overflow keys
+- Test file GENERATE macro issues with Catch2 random generators
+
+### Performance
+- RecSplit lookup: ~75ns (1000 keys)
+- BBHash lookup: ~32ns (1000 keys)
+- CHD lookup: ~12ns (1000 keys)
+- FCH lookup: ~38ns (1000 keys)
+- PTHash lookup: ~39ns (1000 keys)
+
+## [3.0.0] - 2024-09-15
+
+### Added
+- Complete architectural rewrite using C++20/23
+- Concept-based design with `hasher`, `perfect_hasher`, `storage_backend` concepts
+- Strong types: `slot_index`, `hash_value`, `slot_count` replacing raw integers
+- Modern error handling with `std::expected<T, error>`
+- Policy-based perfect hash implementations (RecSplit, CHD, BBHash, PTHash, FCH)
+- Composable architecture: mix any hasher with any storage backend
 - Comprehensive API documentation with Doxygen-style comments in `include/maph.hpp`
 - Complete architecture documentation in `docs/ARCHITECTURE.md`
 - User guide with examples and best practices in `docs/USER_GUIDE.md`
@@ -16,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance benchmarking methodology documentation
 
 ### Changed
+- Header-only library design for easier integration
 - Enhanced inline documentation throughout the codebase
 - Improved README with better examples and quick start guide
 

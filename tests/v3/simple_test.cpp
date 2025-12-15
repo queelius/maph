@@ -1,15 +1,15 @@
-// Simple test runner for v3 code without external dependencies
+// Simple test runner for maph code without external dependencies
 #include <iostream>
 #include <cassert>
 #include <string>
 #include <vector>
-#include "maph/v3/core.hpp"
-#include "maph/v3/hashers.hpp"
-#include "maph/v3/storage.hpp"
-#include "maph/v3/table.hpp"
-#include "maph/v3/maph.hpp"
+#include <maph/core.hpp>
+#include <maph/hashers.hpp>
+#include <maph/storage.hpp>
+#include <maph/table.hpp>
+#include <maph/maph.hpp>
 
-using namespace maph::v3;
+using namespace maph;
 
 void test_core_types() {
     std::cout << "Testing core types..." << std::endl;
@@ -158,7 +158,7 @@ void test_high_level() {
 }
 
 int main() {
-    std::cout << "\n=== Running maph v3 Tests ===\n" << std::endl;
+    std::cout << "\n=== Running maph Tests ===\n" << std::endl;
 
     try {
         test_core_types();

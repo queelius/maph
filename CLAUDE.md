@@ -4,182 +4,344 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-The `rd_ph_filter` library is a generalized C++ framework for space-efficient approximate data structures with Python bindings. Originally designed for set membership testing, it now supports arbitrary function approximation (f: X → Y) with configurable storage sizes (8/16/32/64-bit) and custom decoders. The framework provides controllable trade-offs between space, accuracy, and computation.
+**maph** (Memory-Mapped Approximate Perfect Hash) is a high-performance, memory-mapped database built on perfect hash functions. It provides O(1) lookups with sub-microsecond access times for arbitrary key-value mappings. The project is currently in **v3**, which is a complete rewrite using C++23 with concepts, std::expected, and a composable architecture.
+
+## Architecture Overview
+
+### Core Design Philosophy (v3)
+
+The v3 architecture follows these principles:
+- **Composability**: Each component does one thing well
+- **Type Safety**: Strong types replace primitive obsession
+- **Error Handling**: std::expected for elegant error propagation
+- **Concepts**: Clear interfaces defined using C++20/23 concepts
+- **Zero-Copy**: Memory-mapped storage for minimal overhead
+- **Lock-Free**: Atomic operations for concurrent access
+
+### Key Components (include/maph/)
+
+1. **core.hpp**: Fundamental types and concepts
+   - Strong types: `slot_index`, `hash_value`, `slot_count`
+   - Error handling via `std::expected<T, error>`
+   - Core concepts: `hasher`, `storage_backend`
+
+2. **hashers.hpp**: Hash function implementations
+   - FNV-1a hasher with configurable slot count
+   - Linear probe hasher (decorator pattern)
+   - Basic minimal_perfect_hasher (simple implementation)
+   - Hybrid hasher (combines perfect and standard hashing)
+   - Interface defined by `hasher` concept
+
+3. **hashers_perfect.hpp**: Production-ready perfect hash implementations
+   - **RecSplit**: Simplified bucket-split algorithm (~8 bits/key in current impl)
+   - **CHD**: Classic Compress-Hash-Displace algorithm
+   - **BBHash**: Multi-level collision resolution with O(1) rank queries
+   - **FCH**: Fox-Chazelle-Heath algorithm
+   - **PTHash**: Works for small key sets only (known limitation)
+   - Policy-based design with `perfect_hash_builder` concept
+
+4. **storage.hpp**: Storage backends
+   - Memory-mapped file storage (zero-copy)
+   - In-memory storage (testing)
+   - Interface defined by `storage_backend` concept
+
+5. **table.hpp**: Hash table implementation
+   - Combines hasher + storage
+   - Linear probing for collision resolution
+   - Statistics tracking (load factor, probes)
+
+6. **optimization.hpp**: Perfect hash optimization
+   - Converts dynamic hash tables to perfect hash
+   - Guarantees O(1) lookups with no collisions
+
+7. **maph.hpp**: High-level convenience interface
+   - Type-erased wrapper for flexibility
+   - Familiar get/set/remove API
+
+### Layered Architecture
+
+```
+┌─────────────────────────────────────┐
+│  Applications (CLI, REST API)       │
+├─────────────────────────────────────┤
+│  High-level Interface (maph.hpp)    │
+├─────────────────────────────────────┤
+│  Hash Table (table.hpp)             │
+├─────────────────────────────────────┤
+│  Hashers (hashers.hpp) + Storage    │
+│  (storage.hpp)                      │
+├─────────────────────────────────────┤
+│  Core Types (core.hpp)              │
+└─────────────────────────────────────┘
+```
 
 ## Common Development Commands
 
-### Building the C++ Library
+### Building the Project
 
 ```bash
-# Configure and build
+# Configure for v3 (requires C++23)
 mkdir build && cd build
-cmake .. -DBUILD_TESTS=ON -DBUILD_PYTHON_BINDINGS=ON -DBUILD_EXAMPLES=ON
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_EXAMPLES=ON
+
+# Build all targets
 make -j$(nproc)
 
-# Run all C++ tests
-ctest --verbose --output-on-failure
-# Or directly:
-./tests/rd_ph_filter_tests
-./tests/test_approximate_map
-./tests/test_lazy_iterators
-
-# Run specific test suites
-./tests/test_approximate_map "[SetMembership]"
-./tests/test_approximate_map "[ThresholdFilter]"
-./tests/test_approximate_map "[CompactLookup]"
-
-# Run examples
-./examples/demo_approximate_map
-./examples/demo_lazy_iterators
-./examples/demo_custom_decoders
-
-# Build with documentation
-cmake .. -DBUILD_DOCS=ON
-make docs
+# Build specific targets
+make maph                    # Header-only library
+make v3_demo                 # Demo application
+make v3_simple_test         # Simple test
+make hybrid_architecture_demo
 ```
 
-### Python Development
+### Running Tests
 
 ```bash
-# Install for development (from repository root)
-pip install -e .
+# Run all tests via CTest
+cd build && ctest --verbose --output-on-failure
 
-# Run Python tests
-pytest python/tests -v
-pytest python/tests/test_approximate_filters.py -v
+# Run specific test suites (from build directory)
+./tests/v3/test_v3_core
+./tests/v3/test_v3_hashers
+./tests/v3/test_v3_storage
+./tests/v3/test_v3_table
+./tests/v3/test_v3_integration
+./tests/v3/test_v3_properties
+./tests/v3/test_v3_perfect_hash
 
-# Run with coverage
-pytest python/tests --cov=approximate_filters --cov-report=html
+# Run tests with specific tags using Catch2
+./tests/v3/test_v3_comprehensive "[core]"
+./tests/v3/test_v3_comprehensive "[hasher]"
+./tests/v3/test_v3_comprehensive "[storage]"
+./tests/v3/test_v3_perfect_hash "[recsplit]"
+./tests/v3/test_v3_perfect_hash "[bbhash]"
+./tests/v3/test_v3_perfect_hash "[chd]"
+./tests/v3/test_v3_perfect_hash "[fch]"
 
-# Run specific test classes
-pytest python/tests/test_approximate_filters.py::TestBasicFilters -v
-pytest python/tests/test_approximate_filters.py::TestThresholdFilters -v
-pytest python/tests/test_approximate_filters.py::TestCompactLookup -v
-
-# Run Python examples
-python python/examples/demo_approximate_filters.py
-
-# Format Python code
-black python/
-
-# Type checking
-mypy python/
+# Run single test by name
+./tests/v3/test_v3_perfect_hash "BBHash: Small key set"
 ```
 
-### Code Quality
+### Test Coverage
 
 ```bash
-# Format C++ code (if clang-format available)
-find include tests -name "*.hpp" -o -name "*.cpp" | xargs clang-format -i
+# Build with coverage enabled
+cmake .. -DBUILD_TESTS=ON -DENABLE_COVERAGE=ON
+make -j
 
-# Static analysis (if clang-tidy available)
-clang-tidy include/**/*.hpp -- -std=c++17 -I include
-
-# Check Python code
-flake8 python/
-black --check python/
+# Generate coverage report
+make v3_coverage             # Full HTML report in build/coverage/html/
+make v3_coverage_check       # Quick text report
 ```
 
-## Architecture
+### Running Benchmarks
 
-### Core Components
+```bash
+# Build benchmarks
+cmake .. -DBUILD_BENCHMARKS=ON
+make -j
 
-1. **approximate_map.hpp**: Generalized approximate mapping framework
-   - Template-based design supporting arbitrary mappings (X → Y)
-   - Configurable storage types (8/16/32/64-bit)
-   - Custom decoder support for specialized applications
-   - O(1) lookup operations
+# Run individual benchmarks (from build directory)
+./benchmarks/bench_latency              # Single-threaded latency
+./benchmarks/bench_throughput           # Multi-threaded throughput
+./benchmarks/bench_ycsb                 # YCSB workloads
+./benchmarks/bench_comparison           # vs std::unordered_map
+./benchmarks/bench_perfect_hash         # Perfect hash optimization
+./benchmarks/bench_perfect_hash_compare # Compare all PH algorithms
 
-2. **rd_ph_filter.hpp**: Original set membership filter
-   - Specialized for boolean membership testing
-   - Template-based design with perfect hash function parameter
+# Perfect hash comparison with custom key counts
+./benchmarks/bench_perfect_hash_compare 1000 10000 100000
+```
 
-3. **builder.hpp**: Fluent API and builder patterns
-   - `ApproxMapBuilder`: Generalized builder for filters and lookups
-   - `rd_ph_filter_builder`: Original filter construction
-   - Support for load factor and error rate configuration
+### Building REST API Server
 
-4. **lazy_iterators.hpp**: Lazy evaluation support
-   - `lazy_generator_iterator`: Generate values on-demand
-   - `filter_iterator`: Filter elements with predicates
-   - `transform_iterator`: Transform during iteration
-   - `sampling_iterator`: Random sampling
-   - `chain_iterator`: Chain multiple iterators
+```bash
+cmake .. -DBUILD_REST_API=ON
+make -j
+./integrations/rest_api/maph_server_v3
+```
 
-5. **Python Bindings** (python/src/)
-   - `ph_wrapper.hpp`: Python-compatible perfect hash wrapper
-   - `bindings.cpp`: Original rd_ph_filter bindings
-   - `bindings_v2.cpp`: New approximate_filters module with full API
+### Memory Checking
 
-### Key Design Patterns
+```bash
+# Run tests under Valgrind
+make test_v3_memcheck
 
-- **Template-based generic programming**: Works with any perfect hash function and storage type
-- **Policy-based design**: Decoders define mapping behavior
-- **Builder pattern**: Flexible configuration before construction
-- **Fluent interface**: Chainable method calls for intuitive API
-- **RAII**: Automatic resource management
-- **Immutability**: Filter state cannot be modified after construction
-- **Lazy evaluation**: Iterator-based computation on demand
+# Build with sanitizers
+cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZERS=ON
+make -j
+./tests/v3/test_v3_comprehensive
+```
 
-### Perfect Hash Function Requirements
+## Version History
 
-Any perfect hash function `PH` must provide:
-- `operator()`: Maps elements to indices
-- `max_hash()`: Returns maximum hash value
-- `error_rate()`: Returns collision probability
-- `hash_fn()`: Returns underlying hash function
-- Nested type `H` with `hash_type` typedef
+- **v1**: Original implementation (Jan 2024) - see git tag `v1.0.0`
+- **v2**: Perfect hash focus (Mid 2024) - see git branch `v2.0.1`
+- **v3**: Complete rewrite with C++23, concepts, composable architecture (Sept 2024) - **CURRENT**
+
+**Important**: The codebase is v3-only. v1/v2 are preserved in git history but removed from the working directory.
 
 ## Testing Strategy
 
-### C++ Tests (tests/)
-- Unit tests using Catch2 framework
-- Mock perfect hash implementation for controlled testing
-- Coverage of core functionality, edge cases, and stress tests
+### Test Organization (tests/v3/)
 
-### Python Tests (python/tests/)
-- Integration tests using pytest
-- Tests for all binding functionality
-- Performance and stress tests with large datasets
+| File | Purpose |
+|------|---------|
+| `test_core.cpp` | Core types, strong types, error handling |
+| `test_hashers.cpp` | Hash function implementations |
+| `test_storage.cpp` | Storage backends (mmap, memory) |
+| `test_table.cpp` | Hash table operations |
+| `test_integration.cpp` | End-to-end workflows |
+| `test_properties.cpp` | Property-based testing |
+| `test_perfect_hash.cpp` | Perfect hash algorithms |
+
+### Framework
+
+- Uses **Catch2 v3** framework
+- Test discovery via `catch_discover_tests()`
+- Organized with test tags: `[core]`, `[hasher]`, `[storage]`, `[perfect]`, `[recsplit]`, `[bbhash]`, etc.
+
+### Coverage Goals
+
+- Target: >90% code coverage
+- Run coverage regularly: `make v3_coverage`
+- Coverage reports in: `build/coverage/html/`
+
+## Important Notes
+
+### C++ Standard Requirements
+
+- **v3 requires C++20** (concepts) with C++23 features (`std::expected`)
+- GCC 11+ or Clang 14+ recommended
+- Template metaprogramming for zero-cost abstractions
+
+### Header-Only Library
+
+- `maph` is a header-only library (INTERFACE target)
+- All implementation in headers under `include/maph/`
+- No separate compilation needed
+- Changes require recompilation of dependents
+
+### Memory-Mapped Storage
+
+- Uses `mmap()` for zero-copy file access
+- Atomic operations for thread-safety
+- 512-byte aligned slots for cache efficiency
+- Persistent across process restarts
+
+### Performance Characteristics
+
+- **GET**: 10M ops/sec, <100ns latency (O(1) with perfect hash)
+- **SET**: 8M ops/sec, <150ns latency (lock-free atomic)
+- **Batch operations**: 50M+ ops/sec with SIMD
+- **BBHash queries**: ~12ns (optimized with O(1) rank structure)
+- **RecSplit queries**: ~22-30ns
+- **CHD queries**: ~29ns
+
+### Perfect Hash Algorithm Status
+
+| Algorithm | Status | Notes |
+|-----------|--------|-------|
+| RecSplit | ✅ Working | Simplified impl, ~8 bits/key |
+| CHD | ✅ Working | Classic algorithm, well-tested |
+| BBHash | ✅ Working | Optimized with O(1) rank queries |
+| FCH | ✅ Working | Simple, educational |
+| PTHash | ⚠️ Limited | Works for small sets only (<100 keys) |
+
+## Perfect Hash Functions
+
+### Using Perfect Hash
+
+```cpp
+#include <maph/hashers_perfect.hpp>
+
+std::vector<std::string> keys = {"key1", "key2", "key3"};
+
+// RecSplit - Good for most cases
+auto recsplit = recsplit8::builder{}
+    .add_all(keys)
+    .with_seed(12345)
+    .build().value();
+
+// BBHash - Fast queries with parallel construction
+auto bbhash = bbhash3::builder{}
+    .add_all(keys)
+    .with_gamma(2.0)
+    .with_threads(4)
+    .build().value();
+
+// CHD - Classic, reliable
+auto chd = chd_hasher::builder{}
+    .add_all(keys)
+    .with_lambda(5.0)
+    .build().value();
+
+// FCH - Simple and educational
+auto fch = fch_hasher::builder{}
+    .add_all(keys)
+    .with_bucket_size(4.0)
+    .build().value();
+
+// Use any hasher
+auto slot = recsplit.slot_for("key1");  // O(1) lookup
+auto stats = recsplit.statistics();
+std::cout << "Bits per key: " << stats.bits_per_key << std::endl;
+```
+
+### Testing Perfect Hash
+
+```bash
+# Run all perfect hash tests
+./tests/v3/test_v3_perfect_hash
+
+# Run specific algorithm tests
+./tests/v3/test_v3_perfect_hash "[bbhash]"
+./tests/v3/test_v3_perfect_hash "[recsplit]"
+./tests/v3/test_v3_perfect_hash "[chd]"
+./tests/v3/test_v3_perfect_hash "[fch]"
+
+# Benchmark comparison
+./benchmarks/bench_perfect_hash_compare
+```
+
+### Implementing a New Perfect Hash Algorithm
+
+1. Implement the hasher class with builder pattern in `include/maph/hashers_perfect.hpp`
+2. Satisfy `perfect_hasher` and `perfect_hash_builder` concepts
+3. Add tests in `tests/v3/test_perfect_hash.cpp`
+4. Add to benchmark in `benchmarks/bench_perfect_hash_compare.cpp`
+5. See `docs/PERFECT_HASH_DESIGN.md` for full specification
 
 ## Common Tasks
 
-### Adding a New Decoder
+### Adding a New Test
 
-1. Create decoder struct in `include/rd_ph_filter/`
-```cpp
-template <typename StorageType, typename H>
-struct MyDecoder {
-    using output_type = MyOutputType;
-    output_type operator()(StorageType value, H max_val) const;
-};
-```
-2. Add tests in `tests/test_approximate_map.cpp`
-3. Update Python bindings if needed
-4. Add examples showing usage
+1. Create test file in `tests/v3/test_myfeature.cpp`
+2. Update `tests/v3/CMakeLists.txt`:
+   ```cmake
+   add_executable(test_v3_myfeature test_myfeature.cpp)
+   target_link_libraries(test_v3_myfeature PRIVATE maph Catch2::Catch2WithMain pthread)
+   catch_discover_tests(test_v3_myfeature TEST_PREFIX "v3_myfeature:")
+   ```
+3. Run tests: `ctest -R v3_myfeature`
 
-### Adding a New Storage Type
+### Implementing a New Hasher
 
-1. Template instantiation in `approximate_map.hpp`
-2. Python bindings in `bindings_v2.cpp`
-3. Add filter classes (e.g., `ApproxFilterN`)
-4. Update tests and documentation
+1. Implement `hasher` concept in `include/maph/hashers.hpp`
+2. Required interface:
+   ```cpp
+   struct my_hasher {
+       hash_value hash(std::string_view key) const;
+       slot_count max_slots() const;
+   };
+   ```
+3. Add tests in `tests/v3/test_hashers.cpp`
 
-### Creating Custom Iterators
+### Implementing a New Storage Backend
 
-1. Implement iterator requirements in `lazy_iterators.hpp`
-2. Provide value_type, reference, pointer typedefs
-3. Implement increment, dereference, comparison
-4. Add tests and examples
-
-### Extending the API
-
-1. Add methods to appropriate class in `include/`
-2. Add Doxygen documentation
-3. Add unit tests
-4. Update Python bindings in `python/src/bindings_v2.cpp`
-5. Add Python tests in `test_approximate_filters.py`
-6. Update README and API documentation
+1. Implement `storage_backend` concept in `include/maph/storage.hpp`
+2. Required interface: `read_slot()`, `write_slot()`, `sync()`, `close()`
+3. Add tests in `tests/v3/test_storage.cpp`
 
 ### Debugging Build Issues
 
@@ -187,57 +349,37 @@ struct MyDecoder {
 # Verbose CMake output
 cmake .. -DCMAKE_VERBOSE_MAKEFILE=ON
 
-# Debug build
+# Check C++20/23 support
+g++ --version
+clang++ --version
+
+# Debug build with symbols
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 
-# Check Python modules
-python -c "import rd_ph_filter; print(rd_ph_filter.__version__)"
-python -c "import approximate_filters as af; print(af.__version__)"
-
-# Test specific functionality
-python -c "
-import approximate_filters as af
-f = af.create_filter([1,2,3], bits=32)
-print(f'Storage: {f.storage_bytes()} bytes, FPR: {f.fpr}')
-"
+# Check what files are being compiled
+make VERBOSE=1
 ```
 
-## Performance Considerations
+## Coding Standards
 
-- Filter construction is O(n) where n is the number of elements
-- Lookup operations are O(1) expected time
-- Space complexity: StorageType size × n elements (no key storage)
-- Python bindings add minimal overhead for individual operations
-- Batch operations amortize Python/C++ transition costs
+- **Naming**: Classes `PascalCase`, functions `snake_case`, constants `UPPER_SNAKE_CASE`, members `member_name_`
+- **Formatting**: 4-space indent, 100 char max line length
+- **Style**: RAII, `std::unique_ptr` over raw pointers, `const` everywhere possible
 
-### Storage Trade-offs
+## Commit Message Convention
 
-| Storage | Bytes/Element | FPR | Speed | Use Case |
-|---------|--------------|-----|-------|----------|
-| uint8_t | 1 | 0.39% | Fastest | Large datasets, error-tolerant |
-| uint16_t | 2 | 0.0015% | Fast | Balanced accuracy/space |
-| uint32_t | 4 | ~0% | Fast | High accuracy required |
-| uint64_t | 8 | ~0% | Slower | Cryptographic/security |
+Follow conventional commits (as per CONTRIBUTING.md):
+- `feat:` - New features
+- `fix:` - Bug fixes
+- `docs:` - Documentation changes
+- `test:` - Test additions/changes
+- `refactor:` - Code refactoring
+- `perf:` - Performance improvements
+- `chore:` - Maintenance tasks
 
-## Important Notes
+## Related Files
 
-1. **Header-only library**: Most components are header-only templates. Changes require recompilation of dependent code.
-
-2. **Template instantiation**: Ensure perfect hash implementations and decoders are fully defined before use.
-
-3. **Python modules**: Two modules available:
-   - `rd_ph_filter`: Original API for backward compatibility
-   - `approximate_filters`: New generalized API with full features
-
-4. **Python GIL**: Bindings release GIL for long operations when safe.
-
-5. **Thread safety**: Filters are immutable and thread-safe for reading. Construction is not thread-safe.
-
-6. **Error rates**: 
-   - False positive rate (FPR) determined by storage size
-   - False negative rate (FNR) depends on perfect hash quality
-   - Threshold filters allow FPR tuning via threshold parameter
-
-7. **Memory alignment**: Filters use aligned storage for optimal performance.
-
-8. **Lazy evaluation**: Use lazy iterators for large datasets to avoid memory overhead during construction.
+- `README.md`: User-facing documentation
+- `CONTRIBUTING.md`: Contributor guidelines, coding standards
+- `CHANGELOG.md`: Version history
+- `docs/PERFECT_HASH_DESIGN.md`: Perfect hash architecture specification
