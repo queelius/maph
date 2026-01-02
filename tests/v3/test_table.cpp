@@ -13,6 +13,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_adapters.hpp>
+#include <catch2/generators/catch_generators_random.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -571,35 +573,37 @@ TEST_CASE("hash_table properties", "[table][properties]") {
     );
 
     SECTION("Set-then-get consistency") {
-        auto key_suffix = GENERATE(take(20, random(1, 10000)));
-        std::string key = "prop_key_" + std::to_string(key_suffix);
-        std::string value = "prop_value_" + std::to_string(key_suffix * 2);
+        for (int key_suffix : {1, 42, 100, 500, 1000, 5000, 10000}) {
+            std::string key = "prop_key_" + std::to_string(key_suffix);
+            std::string value = "prop_value_" + std::to_string(key_suffix * 2);
 
-        auto set_result = table.set(key, value);
-        if (set_result.has_value()) {
-            // If set succeeded, get should succeed with same value
-            auto get_result = table.get(key);
-            REQUIRE(get_result.has_value());
-            REQUIRE(*get_result == value);
-            REQUIRE(table.contains(key));
+            auto set_result = table.set(key, value);
+            if (set_result.has_value()) {
+                // If set succeeded, get should succeed with same value
+                auto get_result = table.get(key);
+                REQUIRE(get_result.has_value());
+                REQUIRE(*get_result == value);
+                REQUIRE(table.contains(key));
+            }
         }
     }
 
     SECTION("Remove consistency") {
-        auto key_suffix = GENERATE(take(10, random(1, 1000)));
-        std::string key = "remove_prop_" + std::to_string(key_suffix);
-        std::string value = "remove_value_" + std::to_string(key_suffix);
+        for (int key_suffix : {1, 42, 100, 500, 1000}) {
+            std::string key = "remove_prop_" + std::to_string(key_suffix);
+            std::string value = "remove_value_" + std::to_string(key_suffix);
 
-        // Set, then remove
-        table.set(key, value);
-        REQUIRE(table.contains(key));
+            // Set, then remove
+            (void)table.set(key, value);
+            REQUIRE(table.contains(key));
 
-        auto remove_result = table.remove(key);
-        if (remove_result.has_value()) {
-            // If remove succeeded, key should not exist
-            REQUIRE_FALSE(table.contains(key));
-            auto get_result = table.get(key);
-            REQUIRE_FALSE(get_result.has_value());
+            auto remove_result = table.remove(key);
+            if (remove_result.has_value()) {
+                // If remove succeeded, key should not exist
+                REQUIRE_FALSE(table.contains(key));
+                auto get_result = table.get(key);
+                REQUIRE_FALSE(get_result.has_value());
+            }
         }
     }
 

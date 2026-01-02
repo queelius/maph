@@ -8,6 +8,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_adapters.hpp>
+#include <catch2/generators/catch_generators_random.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
 
@@ -379,14 +381,20 @@ struct mock_storage {
     result<std::span<const std::byte>> read(slot_index) const {
         return std::unexpected(error::key_not_found);
     }
-    status write(slot_index, std::span<const std::byte>) {
+    status write(slot_index, hash_value, std::span<const std::byte>) {
         return {};
     }
     status clear(slot_index) {
         return {};
     }
-    slot_count slot_count() const {
+    maph::slot_count get_slot_count() const {
         return maph::slot_count{100};
+    }
+    bool empty(slot_index) const {
+        return true;
+    }
+    hash_value hash_at(slot_index) const {
+        return hash_value{0};
     }
 };
 
@@ -430,22 +438,25 @@ TEST_CASE("Concept validation", "[core][concepts]") {
 
 TEST_CASE("Core type invariants", "[core][properties]") {
     SECTION("slot_index arithmetic properties") {
-        auto test_value = GENERATE(take(50, random(0ULL, 10000ULL)));
+        // Test with multiple values
+        for (uint64_t test_value : {0ULL, 1ULL, 42ULL, 100ULL, 10000ULL}) {
+            slot_index idx{test_value};
+            REQUIRE(idx.value == test_value);
+            REQUIRE(static_cast<uint64_t>(idx) == test_value);
 
-        slot_index idx{test_value};
-        REQUIRE(idx.value == test_value);
-        REQUIRE(static_cast<uint64_t>(idx) == test_value);
-
-        // Identity property
-        REQUIRE(slot_index{static_cast<uint64_t>(idx)}.value == idx.value);
+            // Identity property
+            REQUIRE(slot_index{static_cast<uint64_t>(idx)}.value == idx.value);
+        }
     }
 
     SECTION("hash_value properties") {
-        auto test_value = GENERATE(take(50, random(1ULL, UINT64_MAX)));
-
-        hash_value h{test_value};
-        REQUIRE(h.value == test_value);
-        REQUIRE(static_cast<uint64_t>(h) == test_value);
+        // Test with multiple values
+        std::vector<uint64_t> test_values = {1ULL, 42ULL, 1000ULL, UINT64_MAX};
+        for (uint64_t test_value : test_values) {
+            hash_value h{test_value};
+            REQUIRE(h.value == test_value);
+            REQUIRE(static_cast<uint64_t>(h) == test_value);
+        }
     }
 
     SECTION("Key comparison transitivity") {

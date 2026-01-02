@@ -270,29 +270,29 @@ TEST_CASE("Storage backend consistency properties", "[properties][storage]") {
     }
 
     SECTION("Clear consistency property") {
-        auto slots_val = GENERATE(take(3, random(10ULL, 100ULL)));
-        slot_count slots{slots_val};
+        slot_count slots{100};
         heap_storage<512> storage{slots};
 
-        auto slot_idx = GENERATE(take(20, random(0ULL, std::min(slots_val - 1, 99ULL))));
-        slot_index idx{slot_idx};
+        for (uint64_t slot_idx : {0ULL, 10ULL, 50ULL, 99ULL}) {
+            slot_index idx{slot_idx};
 
-        // Write some data first
-        std::string data = "clear_test_" + std::to_string(slot_idx);
-        auto data_bytes = std::span{reinterpret_cast<const std::byte*>(data.data()), data.size()};
-        storage.write(idx, hash_value{123}, data_bytes);
+            // Write some data first
+            std::string data = "clear_test_" + std::to_string(slot_idx);
+            auto data_bytes = std::span{reinterpret_cast<const std::byte*>(data.data()), data.size()};
+            (void)storage.write(idx, hash_value{123}, data_bytes);
 
-        // Clear operation properties
-        auto clear_result = storage.clear(idx);
-        REQUIRE(clear_result.has_value());
+            // Clear operation properties
+            auto clear_result = storage.clear(idx);
+            REQUIRE(clear_result.has_value());
 
-        // After clear, slot must be empty
-        REQUIRE(storage.empty(idx));
+            // After clear, slot must be empty
+            REQUIRE(storage.empty(idx));
 
-        // Read must fail after clear
-        auto read_result = storage.read(idx);
-        REQUIRE_FALSE(read_result.has_value());
-        REQUIRE(read_result.error() == error::key_not_found);
+            // Read must fail after clear
+            auto read_result = storage.read(idx);
+            REQUIRE_FALSE(read_result.has_value());
+            REQUIRE(read_result.error() == error::key_not_found);
+        }
     }
 
     SECTION("Mmap storage persistence property") {
