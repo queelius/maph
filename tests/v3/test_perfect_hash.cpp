@@ -240,6 +240,49 @@ TEST_CASE("RecSplit: Builder fluent interface", "[perfect][recsplit]") {
     REQUIRE(result.has_value());
 }
 
+TEST_CASE("RecSplit: Parallel construction", "[perfect][recsplit][parallel]") {
+    auto keys = generate_random_keys(5000);  // Large enough to trigger parallel processing
+
+    SECTION("Single-threaded vs multi-threaded produce same results") {
+        auto single_result = recsplit8::builder{}
+            .add_all(keys)
+            .with_seed(42)
+            .with_threads(1)
+            .build();
+
+        auto multi_result = recsplit8::builder{}
+            .add_all(keys)
+            .with_seed(42)
+            .with_threads(4)
+            .build();
+
+        REQUIRE(single_result.has_value());
+        REQUIRE(multi_result.has_value());
+
+        auto& single_hasher = single_result.value();
+        auto& multi_hasher = multi_result.value();
+
+        // Both should hash all keys correctly
+        for (const auto& key : keys) {
+            auto single_slot = single_hasher.slot_for(key);
+            auto multi_slot = multi_hasher.slot_for(key);
+            REQUIRE(single_slot.has_value());
+            REQUIRE(multi_slot.has_value());
+            REQUIRE(single_slot->value == multi_slot->value);
+        }
+    }
+
+    SECTION("Multi-threaded correctness") {
+        auto result = recsplit8::builder{}
+            .add_all(keys)
+            .with_threads(8)
+            .build();
+
+        REQUIRE(result.has_value());
+        REQUIRE(verify_perfect_hash(result.value(), keys));
+    }
+}
+
 // ===== CHD TESTS =====
 
 TEST_CASE("CHD: Empty keys", "[perfect][chd]") {
@@ -1273,4 +1316,134 @@ TEST_CASE("Stress: Keys with repeating patterns", "[perfect][stress]") {
     auto result = recsplit8::builder{}.add_all(keys).build();
     REQUIRE(result.has_value());
     REQUIRE(verify_perfect_hash(result.value(), keys));
+}
+
+// ===== SERIALIZATION TESTS =====
+
+TEST_CASE("Serialization: RecSplit round-trip", "[perfect][serialization]") {
+    auto keys = generate_random_keys(100);
+
+    auto original = recsplit8::builder{}.add_all(keys).build().value();
+
+    SECTION("Serialize and deserialize") {
+        auto serialized = original.serialize();
+        REQUIRE(serialized.size() > 0);
+
+        auto restored = recsplit8::deserialize(serialized);
+        REQUIRE(restored.has_value());
+
+        // Verify same behavior
+        for (const auto& key : keys) {
+            auto orig_slot = original.slot_for(key);
+            auto rest_slot = restored->slot_for(key);
+            REQUIRE(orig_slot.has_value());
+            REQUIRE(rest_slot.has_value());
+            REQUIRE(orig_slot->value == rest_slot->value);
+        }
+
+        // Verify unknown keys
+        REQUIRE_FALSE(restored->slot_for("unknown_key_xyz").has_value());
+    }
+
+    SECTION("Statistics match after deserialization") {
+        auto serialized = original.serialize();
+        auto restored = recsplit8::deserialize(serialized).value();
+
+        auto orig_stats = original.statistics();
+        auto rest_stats = restored.statistics();
+
+        REQUIRE(orig_stats.key_count == rest_stats.key_count);
+        REQUIRE(orig_stats.perfect_count == rest_stats.perfect_count);
+        REQUIRE(orig_stats.overflow_count == rest_stats.overflow_count);
+    }
+}
+
+TEST_CASE("Serialization: CHD round-trip", "[perfect][serialization]") {
+    auto keys = generate_random_keys(100);
+
+    auto original = chd_hasher::builder{}.add_all(keys).build().value();
+
+    auto serialized = original.serialize();
+    REQUIRE(serialized.size() > 0);
+
+    auto restored = chd_hasher::deserialize(serialized);
+    REQUIRE(restored.has_value());
+
+    for (const auto& key : keys) {
+        auto orig_slot = original.slot_for(key);
+        auto rest_slot = restored->slot_for(key);
+        REQUIRE(orig_slot.has_value());
+        REQUIRE(rest_slot.has_value());
+        REQUIRE(orig_slot->value == rest_slot->value);
+    }
+}
+
+TEST_CASE("Serialization: BBHash round-trip", "[perfect][serialization]") {
+    auto keys = generate_random_keys(100);
+
+    auto original = bbhash3::builder{}.add_all(keys).build().value();
+
+    auto serialized = original.serialize();
+    REQUIRE(serialized.size() > 0);
+
+    auto restored = bbhash3::deserialize(serialized);
+    REQUIRE(restored.has_value());
+
+    for (const auto& key : keys) {
+        auto orig_slot = original.slot_for(key);
+        auto rest_slot = restored->slot_for(key);
+        REQUIRE(orig_slot.has_value());
+        REQUIRE(rest_slot.has_value());
+        REQUIRE(orig_slot->value == rest_slot->value);
+    }
+}
+
+TEST_CASE("Serialization: FCH round-trip", "[perfect][serialization]") {
+    auto keys = generate_random_keys(100);
+
+    auto original = fch_hasher::builder{}.add_all(keys).build().value();
+
+    auto serialized = original.serialize();
+    REQUIRE(serialized.size() > 0);
+
+    auto restored = fch_hasher::deserialize(serialized);
+    REQUIRE(restored.has_value());
+
+    for (const auto& key : keys) {
+        auto orig_slot = original.slot_for(key);
+        auto rest_slot = restored->slot_for(key);
+        REQUIRE(orig_slot.has_value());
+        REQUIRE(rest_slot.has_value());
+        REQUIRE(orig_slot->value == rest_slot->value);
+    }
+}
+
+TEST_CASE("Serialization: Invalid data handling", "[perfect][serialization]") {
+    SECTION("Empty data") {
+        std::vector<std::byte> empty;
+        auto result = recsplit8::deserialize(empty);
+        REQUIRE_FALSE(result.has_value());
+    }
+
+    SECTION("Truncated data") {
+        auto keys = generate_random_keys(50);
+        auto hasher = recsplit8::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+
+        // Truncate the data
+        serialized.resize(serialized.size() / 2);
+        auto result = recsplit8::deserialize(serialized);
+        REQUIRE_FALSE(result.has_value());
+    }
+
+    SECTION("Corrupted magic number") {
+        auto keys = generate_random_keys(50);
+        auto hasher = recsplit8::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+
+        // Corrupt the magic number
+        serialized[0] = std::byte{0xFF};
+        auto result = recsplit8::deserialize(serialized);
+        REQUIRE_FALSE(result.has_value());
+    }
 }

@@ -20,6 +20,8 @@
 #include <numeric>
 #include <unordered_set>
 #include <limits>
+#include <cstring>
+#include <thread>
 
 namespace maph {
 
@@ -50,11 +52,55 @@ struct perfect_hash_stats {
     size_t memory_bytes{0};
     double bits_per_key{0.0};
     size_t build_time_us{0};  // Microseconds
+    size_t perfect_count{0};  // Keys placed via perfect hash
+    size_t overflow_count{0}; // Keys in overflow storage
 
     [[nodiscard]] constexpr bool is_minimal() const noexcept {
         return true;  // All our implementations are minimal
     }
 };
+
+// Magic numbers for serialization format
+constexpr uint32_t PERFECT_HASH_MAGIC = 0x4D415048;  // "MAPH"
+constexpr uint32_t PERFECT_HASH_VERSION = 1;
+
+// SIMD-optimized linear search for fingerprint in overflow array
+// Returns index if found, or size if not found
+#if defined(__AVX2__)
+#include <immintrin.h>
+inline size_t find_fingerprint_simd(const uint64_t* data, size_t size, uint64_t target) noexcept {
+    // Process 4 elements at a time with AVX2
+    __m256i target_vec = _mm256_set1_epi64x(static_cast<int64_t>(target));
+
+    size_t i = 0;
+    for (; i + 4 <= size; i += 4) {
+        __m256i data_vec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
+        __m256i cmp = _mm256_cmpeq_epi64(data_vec, target_vec);
+        int mask = _mm256_movemask_epi8(cmp);
+        if (mask != 0) {
+            // Find which of the 4 elements matched
+            if (mask & 0x000000FF) return i;
+            if (mask & 0x0000FF00) return i + 1;
+            if (mask & 0x00FF0000) return i + 2;
+            return i + 3;
+        }
+    }
+
+    // Handle remaining elements
+    for (; i < size; ++i) {
+        if (data[i] == target) return i;
+    }
+    return size;
+}
+#else
+inline size_t find_fingerprint_simd(const uint64_t* data, size_t size, uint64_t target) noexcept {
+    // Scalar fallback - still use some optimizations
+    for (size_t i = 0; i < size; ++i) {
+        if (data[i] == target) return i;
+    }
+    return size;
+}
+#endif
 
 // Lightweight fingerprint used to validate membership without storing full keys
 inline uint64_t fingerprint64(std::string_view key) noexcept {
@@ -236,10 +282,12 @@ public:
             }
         }
 
-        // Fallback: check overflow keys
-        for (size_t i = 0; i < overflow_fingerprints_.size(); ++i) {
-            if (overflow_fingerprints_[i] == actual_fp) {
-                return slot_index{overflow_slots_[i]};
+        // Fallback: check overflow keys using SIMD-optimized search
+        if (!overflow_fingerprints_.empty()) {
+            size_t idx = find_fingerprint_simd(overflow_fingerprints_.data(),
+                                               overflow_fingerprints_.size(), actual_fp);
+            if (idx < overflow_fingerprints_.size()) {
+                return slot_index{overflow_slots_[idx]};
             }
         }
 
@@ -275,33 +323,179 @@ public:
     [[nodiscard]] double bits_per_key() const noexcept { return statistics().bits_per_key; }
     [[nodiscard]] size_t memory_bytes() const noexcept { return statistics().memory_bytes; }
 
+    // Algorithm identifier for serialization
+    static constexpr uint32_t ALGORITHM_ID = 1;  // RecSplit
+
     // Serialization
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> result;
-        // Magic + version + algorithm type
-        const std::byte magic[] = {std::byte{'M'}, std::byte{'A'}, std::byte{'P'}, std::byte{'H'}};
-        result.insert(result.end(), std::begin(magic), std::end(magic));
 
-        // Simplified serialization
+        // Helper to append values
         auto append = [&](const auto& value) {
             auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
             result.insert(result.end(), bytes.begin(), bytes.end());
         };
 
+        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) {
+                append(v);
+            }
+        };
+
+        auto append_vector_size = [&](const std::vector<size_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) {
+                append(v);
+            }
+        };
+
+        // Header: magic + version + algorithm
+        append(PERFECT_HASH_MAGIC);
+        append(PERFECT_HASH_VERSION);
+        append(ALGORITHM_ID);
+        append(static_cast<uint32_t>(LeafSize));
+
+        // Core data
         append(key_count_);
+        append(perfect_count_);
         append(num_buckets_);
         append(base_seed_);
 
-        // Bucket data would go here
+        // Buckets
+        append(buckets_.size());
+        for (const auto& b : buckets_) {
+            append(b.split);
+            append(b.num_keys);
+        }
+
+        // Offsets, fingerprints, overflow
+        append_vector_u64(bucket_offsets_);
+        append_vector_u64(fingerprints_);
+        append_vector_u64(overflow_fingerprints_);
+        append_vector_size(overflow_slots_);
+
         return result;
     }
 
     [[nodiscard]] static result<recsplit_hasher> deserialize(std::span<const std::byte> data) {
-        if (data.size() < 4 + sizeof(size_t) * 2 + sizeof(uint64_t)) {
+        size_t offset = 0;
+
+        // Helper to read a value of type T
+        auto read_bytes = [&](void* out, size_t n) -> bool {
+            if (offset + n > data.size()) return false;
+            std::memcpy(out, data.data() + offset, n);
+            offset += n;
+            return true;
+        };
+
+        auto read_u16 = [&]() -> std::optional<uint16_t> {
+            uint16_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u32 = [&]() -> std::optional<uint32_t> {
+            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u64 = [&]() -> std::optional<uint64_t> {
+            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_size = [&]() -> std::optional<size_t> {
+            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+
+        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<size_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_size();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        // Verify header
+        auto magic = read_u32();
+        if (!magic || *magic != PERFECT_HASH_MAGIC) {
             return std::unexpected(error::invalid_format);
         }
-        // Simplified deserialization
-        return std::unexpected(error::invalid_format);
+
+        auto version = read_u32();
+        if (!version || *version != PERFECT_HASH_VERSION) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        auto algo = read_u32();
+        if (!algo || *algo != ALGORITHM_ID) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        auto leaf_size = read_u32();
+        if (!leaf_size || *leaf_size != LeafSize) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        // Read core data
+        auto key_count = read_size();
+        auto perfect_count = read_size();
+        auto num_buckets = read_size();
+        auto base_seed = read_u64();
+
+        if (!key_count || !perfect_count || !num_buckets || !base_seed) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        // Create hasher with reconstructed data
+        recsplit_hasher hasher(*key_count, *base_seed);
+        hasher.perfect_count_ = *perfect_count;
+        hasher.num_buckets_ = *num_buckets;
+
+        // Read buckets
+        auto bucket_count = read_size();
+        if (!bucket_count) {
+            return std::unexpected(error::invalid_format);
+        }
+        hasher.buckets_.resize(*bucket_count);
+        for (size_t i = 0; i < *bucket_count; ++i) {
+            auto split = read_u16();
+            auto num_keys = read_size();
+            if (!split || !num_keys) {
+                return std::unexpected(error::invalid_format);
+            }
+            hasher.buckets_[i].split = *split;
+            hasher.buckets_[i].num_keys = *num_keys;
+        }
+
+        // Read vectors
+        auto bucket_offsets = read_vector_u64();
+        auto fingerprints = read_vector_u64();
+        auto overflow_fingerprints = read_vector_u64();
+        auto overflow_slots = read_vector_size();
+
+        if (!bucket_offsets || !fingerprints || !overflow_fingerprints || !overflow_slots) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        hasher.bucket_offsets_ = std::move(*bucket_offsets);
+        hasher.fingerprints_ = std::move(*fingerprints);
+        hasher.overflow_fingerprints_ = std::move(*overflow_fingerprints);
+        hasher.overflow_slots_ = std::move(*overflow_slots);
+
+        return hasher;
     }
 
     /**
@@ -311,6 +505,7 @@ public:
     class builder {
         std::vector<std::string> keys_;
         uint64_t seed_{0x123456789abcdef0ULL};
+        size_t num_threads_{1};
 
     public:
         builder() = default;
@@ -335,6 +530,87 @@ public:
             return *this;
         }
 
+        builder& with_threads(size_t threads) {
+            num_threads_ = std::max(size_t{1}, threads);
+            return *this;
+        }
+
+    private:
+        // Result of processing a single bucket
+        struct bucket_result {
+            uint16_t split{0};
+            size_t num_keys{0};
+            bool success{false};
+            std::vector<std::string> overflow_keys;
+            std::vector<std::pair<size_t, uint64_t>> local_fingerprints;  // (local_slot, fingerprint)
+        };
+
+        // Process a single bucket - can be called in parallel
+        [[nodiscard]] bucket_result process_bucket(
+            const recsplit_hasher& hasher,
+            const std::vector<std::string>& keys_in_bucket,
+            size_t bucket_idx) const {
+
+            bucket_result result;
+
+            if (keys_in_bucket.empty()) {
+                result.success = true;
+                return result;
+            }
+
+            // If bucket is too large, move keys to overflow
+            if (keys_in_bucket.size() > LeafSize * 3) {
+                result.overflow_keys = keys_in_bucket;
+                result.success = true;
+                return result;
+            }
+
+            // Find a split value that gives no collisions within this bucket
+            constexpr uint16_t max_split_search = 10000;
+
+            for (uint16_t split = 0; split < max_split_search; ++split) {
+                // Check if all keys get unique slots with this split
+                std::unordered_set<size_t> used_slots;
+                bool has_collision = false;
+
+                // Temporarily set split to compute slot positions
+                auto test_slot_in_bucket = [&](std::string_view key) -> size_t {
+                    if (keys_in_bucket.size() == 0) return 0;
+                    uint64_t bucket_seed = hasher.base_seed_ ^ (bucket_idx * 0x9e3779b97f4a7c15ULL) ^ (split * 0xbf58476d1ce4e5b9ULL);
+                    return hasher.hash_with_seed(key, bucket_seed) % keys_in_bucket.size();
+                };
+
+                for (const auto& key : keys_in_bucket) {
+                    size_t slot = test_slot_in_bucket(key);
+                    if (used_slots.count(slot)) {
+                        has_collision = true;
+                        break;
+                    }
+                    used_slots.insert(slot);
+                }
+
+                if (!has_collision) {
+                    result.split = split;
+                    result.num_keys = keys_in_bucket.size();
+                    result.success = true;
+
+                    // Store local fingerprints
+                    for (const auto& key : keys_in_bucket) {
+                        size_t local_slot = test_slot_in_bucket(key);
+                        uint64_t fp = hasher.hash_with_seed(key, seed_ ^ 0xFEDCBA9876543210ULL);
+                        result.local_fingerprints.emplace_back(local_slot, fp);
+                    }
+                    return result;
+                }
+            }
+
+            // Couldn't find split - move keys to overflow
+            result.overflow_keys = keys_in_bucket;
+            result.success = true;
+            return result;
+        }
+
+    public:
         [[nodiscard]] result<recsplit_hasher> build() {
             if (keys_.empty()) {
                 return std::unexpected(error::optimization_failed);
@@ -345,7 +621,6 @@ public:
             keys_.erase(std::unique(keys_.begin(), keys_.end()), keys_.end());
 
             recsplit_hasher hasher(keys_.size(), seed_);
-            std::vector<std::string> overflow_keys;
 
             // 1. Partition keys into buckets
             std::vector<std::vector<std::string>> bucket_keys(hasher.num_buckets_);
@@ -354,89 +629,66 @@ public:
                 bucket_keys[bucket_idx].push_back(key);
             }
 
-            // 2. For each bucket, find a split value that gives unique slots
-            size_t cumulative_offset = 0;
-            for (size_t bucket_idx = 0; bucket_idx < hasher.num_buckets_; ++bucket_idx) {
-                auto& bucket = hasher.buckets_[bucket_idx];
-                const auto& keys_in_bucket = bucket_keys[bucket_idx];
+            // 2. Process buckets (potentially in parallel)
+            std::vector<bucket_result> results(hasher.num_buckets_);
 
-                hasher.bucket_offsets_[bucket_idx] = cumulative_offset;
-
-                if (keys_in_bucket.empty()) {
-                    bucket.split = 0;
-                    bucket.num_keys = 0;
-                    continue;
-                }
-
-                // If bucket is too large, move keys to overflow
-                if (keys_in_bucket.size() > LeafSize * 3) {
-                    bucket.split = 0;
-                    bucket.num_keys = 0;
-                    for (const auto& key : keys_in_bucket) {
-                        overflow_keys.push_back(key);
+            if (num_threads_ > 1 && hasher.num_buckets_ > 100) {
+                // Parallel processing using std::thread
+                auto process_range = [&](size_t start, size_t end) {
+                    for (size_t i = start; i < end; ++i) {
+                        results[i] = process_bucket(hasher, bucket_keys[i], i);
                     }
-                    continue;
-                }
+                };
 
-                // Find a split value that gives no collisions within this bucket
-                bool found = false;
-                constexpr uint16_t max_split_search = 10000;
+                std::vector<std::thread> threads;
+                size_t buckets_per_thread = (hasher.num_buckets_ + num_threads_ - 1) / num_threads_;
 
-                for (uint16_t split = 0; split < max_split_search; ++split) {
-                    bucket.split = split;
-
-                    // Check if all keys get unique slots with this split
-                    std::unordered_set<size_t> used_slots;
-                    bool has_collision = false;
-
-                    for (const auto& key : keys_in_bucket) {
-                        size_t slot = hasher.slot_in_bucket(key, bucket_idx);
-                        if (used_slots.count(slot)) {
-                            has_collision = true;
-                            break;
-                        }
-                        used_slots.insert(slot);
-                    }
-
-                    if (!has_collision) {
-                        found = true;
-                        break;
+                for (size_t t = 0; t < num_threads_; ++t) {
+                    size_t start = t * buckets_per_thread;
+                    size_t end = std::min(start + buckets_per_thread, hasher.num_buckets_);
+                    if (start < end) {
+                        threads.emplace_back(process_range, start, end);
                     }
                 }
 
-                if (!found) {
-                    // Couldn't find split - move keys to overflow
-                    bucket.split = 0;
-                    bucket.num_keys = 0;
-                    for (const auto& key : keys_in_bucket) {
-                        overflow_keys.push_back(key);
-                    }
-                    continue;
+                for (auto& thread : threads) {
+                    thread.join();
                 }
-
-                // Successfully placed bucket - store fingerprints
-                bucket.num_keys = keys_in_bucket.size();
-                for (const auto& key : keys_in_bucket) {
-                    size_t local_slot = hasher.slot_in_bucket(key, bucket_idx);
-                    size_t global_slot = cumulative_offset + local_slot;
-                    hasher.fingerprints_[global_slot] = hasher.hash_with_seed(key, seed_ ^ 0xFEDCBA9876543210ULL);
+            } else {
+                // Single-threaded processing
+                for (size_t bucket_idx = 0; bucket_idx < hasher.num_buckets_; ++bucket_idx) {
+                    results[bucket_idx] = process_bucket(hasher, bucket_keys[bucket_idx], bucket_idx);
                 }
-
-                cumulative_offset += bucket.num_keys;
             }
 
+            // 3. Compute cumulative offsets (sequential, but O(num_buckets))
+            size_t cumulative_offset = 0;
+            for (size_t bucket_idx = 0; bucket_idx < hasher.num_buckets_; ++bucket_idx) {
+                hasher.bucket_offsets_[bucket_idx] = cumulative_offset;
+                hasher.buckets_[bucket_idx].split = results[bucket_idx].split;
+                hasher.buckets_[bucket_idx].num_keys = results[bucket_idx].num_keys;
+                cumulative_offset += results[bucket_idx].num_keys;
+            }
             hasher.bucket_offsets_[hasher.num_buckets_] = cumulative_offset;
             hasher.perfect_count_ = cumulative_offset;
 
-            // Assign overflow keys to sequential slots after perfect keys
-            for (const auto& key : overflow_keys) {
-                hasher.overflow_fingerprints_.push_back(hasher.hash_with_seed(key, seed_ ^ 0xFEDCBA9876543210ULL));
-                hasher.overflow_slots_.push_back(cumulative_offset);
-                ++cumulative_offset;
+            // 4. Copy fingerprints to their global positions
+            hasher.fingerprints_.resize(hasher.perfect_count_);
+            for (size_t bucket_idx = 0; bucket_idx < hasher.num_buckets_; ++bucket_idx) {
+                size_t base_offset = hasher.bucket_offsets_[bucket_idx];
+                for (const auto& [local_slot, fp] : results[bucket_idx].local_fingerprints) {
+                    hasher.fingerprints_[base_offset + local_slot] = fp;
+                }
             }
 
-            // Resize fingerprints to only include perfect keys
-            hasher.fingerprints_.resize(hasher.perfect_count_);
+            // 5. Collect and assign overflow keys
+            for (size_t bucket_idx = 0; bucket_idx < hasher.num_buckets_; ++bucket_idx) {
+                for (const auto& key : results[bucket_idx].overflow_keys) {
+                    hasher.overflow_fingerprints_.push_back(hasher.hash_with_seed(key, seed_ ^ 0xFEDCBA9876543210ULL));
+                    hasher.overflow_slots_.push_back(cumulative_offset);
+                    ++cumulative_offset;
+                }
+            }
 
             return hasher;
         }
@@ -548,10 +800,12 @@ public:
             }
         }
 
-        // Fallback: check overflow keys
-        for (size_t i = 0; i < overflow_fingerprints_.size(); ++i) {
-            if (overflow_fingerprints_[i] == actual_fp) {
-                return slot_index{overflow_slots_[i]};
+        // Fallback: check overflow keys using SIMD-optimized search
+        if (!overflow_fingerprints_.empty()) {
+            size_t idx = find_fingerprint_simd(overflow_fingerprints_.data(),
+                                               overflow_fingerprints_.size(), actual_fp);
+            if (idx < overflow_fingerprints_.size()) {
+                return slot_index{overflow_slots_[idx]};
             }
         }
 
@@ -585,6 +839,185 @@ public:
     [[nodiscard]] size_t table_size() const noexcept { return table_size_; }
     [[nodiscard]] double bits_per_key() const noexcept { return statistics().bits_per_key; }
     [[nodiscard]] size_t memory_bytes() const noexcept { return statistics().memory_bytes; }
+
+    // Algorithm identifier for serialization
+    static constexpr uint32_t ALGORITHM_ID = 2;  // CHD
+
+    [[nodiscard]] std::vector<std::byte> serialize() const {
+        std::vector<std::byte> result;
+
+        auto append = [&](const auto& value) {
+            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
+            result.insert(result.end(), bytes.begin(), bytes.end());
+        };
+
+        auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_size = [&](const std::vector<size_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        // Header
+        append(PERFECT_HASH_MAGIC);
+        append(PERFECT_HASH_VERSION);
+        append(ALGORITHM_ID);
+
+        // Core data
+        append(key_count_);
+        append(perfect_count_);
+        append(num_buckets_);
+        append(table_size_);
+        append(lambda_);
+        append(seed_);
+
+        // Vectors
+        append_vector_u32(displacements_);
+        append_vector_i64(slot_map_);
+        append_vector_u64(fingerprints_);
+        append_vector_u64(overflow_fingerprints_);
+        append_vector_size(overflow_slots_);
+
+        return result;
+    }
+
+    [[nodiscard]] static result<chd_hasher> deserialize(std::span<const std::byte> data) {
+        size_t offset = 0;
+
+        auto read_bytes = [&](void* out, size_t n) -> bool {
+            if (offset + n > data.size()) return false;
+            std::memcpy(out, data.data() + offset, n);
+            offset += n;
+            return true;
+        };
+
+        auto read_u32 = [&]() -> std::optional<uint32_t> {
+            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_i64 = [&]() -> std::optional<int64_t> {
+            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u64 = [&]() -> std::optional<uint64_t> {
+            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_size = [&]() -> std::optional<size_t> {
+            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_double = [&]() -> std::optional<double> {
+            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+
+        auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint32_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u32();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<int64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_i64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<size_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_size();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        // Verify header
+        auto magic = read_u32();
+        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
+
+        auto version = read_u32();
+        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
+
+        auto algo = read_u32();
+        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
+
+        // Read core data
+        auto key_count = read_size();
+        auto perfect_count = read_size();
+        auto num_buckets = read_size();
+        auto table_size = read_size();
+        auto lambda = read_double();
+        auto seed = read_u64();
+
+        if (!key_count || !perfect_count || !num_buckets || !table_size || !lambda || !seed) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        chd_hasher hasher(*key_count, *lambda, *seed);
+        hasher.perfect_count_ = *perfect_count;
+        hasher.num_buckets_ = *num_buckets;
+        hasher.table_size_ = *table_size;
+
+        // Read vectors
+        auto displacements = read_vector_u32();
+        auto slot_map = read_vector_i64();
+        auto fingerprints = read_vector_u64();
+        auto overflow_fingerprints = read_vector_u64();
+        auto overflow_slots = read_vector_size();
+
+        if (!displacements || !slot_map || !fingerprints || !overflow_fingerprints || !overflow_slots) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        hasher.displacements_ = std::move(*displacements);
+        hasher.slot_map_ = std::move(*slot_map);
+        hasher.fingerprints_ = std::move(*fingerprints);
+        hasher.overflow_fingerprints_ = std::move(*overflow_fingerprints);
+        hasher.overflow_slots_ = std::move(*overflow_slots);
+
+        return hasher;
+    }
 
     class builder {
         std::vector<std::string> keys_;
@@ -887,10 +1320,12 @@ public:
             cumulative_offset += levels_[level_idx].num_keys;
         }
 
-        // Fallback: check overflow keys
-        for (size_t i = 0; i < overflow_fingerprints_.size(); ++i) {
-            if (overflow_fingerprints_[i] == fp) {
-                return slot_index{overflow_slots_[i]};
+        // Fallback: check overflow keys using SIMD-optimized search
+        if (!overflow_fingerprints_.empty()) {
+            size_t idx = find_fingerprint_simd(overflow_fingerprints_.data(),
+                                               overflow_fingerprints_.size(), fp);
+            if (idx < overflow_fingerprints_.size()) {
+                return slot_index{overflow_slots_[idx]};
             }
         }
 
@@ -935,6 +1370,166 @@ public:
     [[nodiscard]] double bits_per_key() const noexcept { return statistics().bits_per_key; }
     [[nodiscard]] size_t memory_bytes() const noexcept { return statistics().memory_bytes; }
     [[nodiscard]] double gamma() const noexcept { return gamma_; }
+
+    // Algorithm identifier for serialization
+    static constexpr uint32_t ALGORITHM_ID = 3;  // BBHash
+
+    [[nodiscard]] std::vector<std::byte> serialize() const {
+        std::vector<std::byte> result;
+
+        auto append = [&](const auto& value) {
+            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
+            result.insert(result.end(), bytes.begin(), bytes.end());
+        };
+
+        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_size = [&](const std::vector<size_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        // Header
+        append(PERFECT_HASH_MAGIC);
+        append(PERFECT_HASH_VERSION);
+        append(ALGORITHM_ID);
+        append(static_cast<uint32_t>(NumLevels));
+
+        // Core data
+        append(key_count_);
+        append(perfect_count_);
+        append(total_slots_);
+        append(gamma_);
+        append(base_seed_);
+
+        // Levels
+        for (const auto& level : levels_) {
+            append_vector_u64(level.bits);
+            append_vector_size(level.rank_checkpoints);
+            append(level.num_keys);
+            append(level.seed);
+        }
+
+        // Fingerprints and overflow
+        append_vector_u64(fingerprints_);
+        append_vector_u64(overflow_fingerprints_);
+        append_vector_size(overflow_slots_);
+
+        return result;
+    }
+
+    [[nodiscard]] static result<bbhash_hasher> deserialize(std::span<const std::byte> data) {
+        size_t offset = 0;
+
+        auto read_bytes = [&](void* out, size_t n) -> bool {
+            if (offset + n > data.size()) return false;
+            std::memcpy(out, data.data() + offset, n);
+            offset += n;
+            return true;
+        };
+
+        auto read_u32 = [&]() -> std::optional<uint32_t> {
+            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u64 = [&]() -> std::optional<uint64_t> {
+            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_size = [&]() -> std::optional<size_t> {
+            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_double = [&]() -> std::optional<double> {
+            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+
+        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<size_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_size();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        // Verify header
+        auto magic = read_u32();
+        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
+
+        auto version = read_u32();
+        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
+
+        auto algo = read_u32();
+        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
+
+        auto num_levels = read_u32();
+        if (!num_levels || *num_levels != NumLevels) return std::unexpected(error::invalid_format);
+
+        // Read core data
+        auto key_count = read_size();
+        auto perfect_count = read_size();
+        auto total_slots = read_size();
+        auto gamma = read_double();
+        auto base_seed = read_u64();
+
+        if (!key_count || !perfect_count || !total_slots || !gamma || !base_seed) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        bbhash_hasher hasher(*key_count, *gamma, *base_seed);
+        hasher.perfect_count_ = *perfect_count;
+        hasher.total_slots_ = *total_slots;
+
+        // Read levels
+        for (size_t i = 0; i < NumLevels; ++i) {
+            auto bits = read_vector_u64();
+            auto rank_checkpoints = read_vector_size();
+            auto num_keys = read_size();
+            auto seed = read_u64();
+
+            if (!bits || !rank_checkpoints || !num_keys || !seed) {
+                return std::unexpected(error::invalid_format);
+            }
+
+            hasher.levels_[i].bits = std::move(*bits);
+            hasher.levels_[i].rank_checkpoints = std::move(*rank_checkpoints);
+            hasher.levels_[i].num_keys = *num_keys;
+            hasher.levels_[i].seed = *seed;
+        }
+
+        // Read fingerprints and overflow
+        auto fingerprints = read_vector_u64();
+        auto overflow_fingerprints = read_vector_u64();
+        auto overflow_slots = read_vector_size();
+
+        if (!fingerprints || !overflow_fingerprints || !overflow_slots) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        hasher.fingerprints_ = std::move(*fingerprints);
+        hasher.overflow_fingerprints_ = std::move(*overflow_fingerprints);
+        hasher.overflow_slots_ = std::move(*overflow_slots);
+
+        return hasher;
+    }
 
     /**
      * @class builder
@@ -1215,10 +1810,12 @@ public:
             }
         }
 
-        // Fallback: check overflow keys
-        for (size_t i = 0; i < overflow_fingerprints_.size(); ++i) {
-            if (overflow_fingerprints_[i] == fp) {
-                return slot_index{overflow_slots_[i]};
+        // Fallback: check overflow keys using SIMD-optimized search
+        if (!overflow_fingerprints_.empty()) {
+            size_t idx = find_fingerprint_simd(overflow_fingerprints_.data(),
+                                               overflow_fingerprints_.size(), fp);
+            if (idx < overflow_fingerprints_.size()) {
+                return slot_index{overflow_slots_[idx]};
             }
         }
 
@@ -1546,10 +2143,12 @@ public:
             }
         }
 
-        // Fallback: check overflow keys (linear search - only used when perfect hash fails)
-        for (size_t i = 0; i < overflow_fingerprints_.size(); ++i) {
-            if (overflow_fingerprints_[i] == actual_fp) {
-                return slot_index{overflow_slots_[i]};
+        // Fallback: check overflow keys using SIMD-optimized search
+        if (!overflow_fingerprints_.empty()) {
+            size_t idx = find_fingerprint_simd(overflow_fingerprints_.data(),
+                                               overflow_fingerprints_.size(), actual_fp);
+            if (idx < overflow_fingerprints_.size()) {
+                return slot_index{overflow_slots_[idx]};
             }
         }
 
@@ -1584,6 +2183,185 @@ public:
     [[nodiscard]] double bits_per_key() const noexcept { return statistics().bits_per_key; }
     [[nodiscard]] size_t memory_bytes() const noexcept { return statistics().memory_bytes; }
     [[nodiscard]] size_t num_buckets() const noexcept { return num_buckets_; }
+
+    // Algorithm identifier for serialization
+    static constexpr uint32_t ALGORITHM_ID = 4;  // FCH
+
+    [[nodiscard]] std::vector<std::byte> serialize() const {
+        std::vector<std::byte> result;
+
+        auto append = [&](const auto& value) {
+            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
+            result.insert(result.end(), bytes.begin(), bytes.end());
+        };
+
+        auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_size = [&](const std::vector<size_t>& vec) {
+            append(vec.size());
+            for (const auto& v : vec) append(v);
+        };
+
+        // Header
+        append(PERFECT_HASH_MAGIC);
+        append(PERFECT_HASH_VERSION);
+        append(ALGORITHM_ID);
+
+        // Core data
+        append(key_count_);
+        append(perfect_count_);
+        append(num_buckets_);
+        append(table_size_);
+        append(bucket_size_);
+        append(seed_);
+
+        // Vectors
+        append_vector_u32(displacements_);
+        append_vector_i64(slot_map_);
+        append_vector_u64(fingerprints_);
+        append_vector_u64(overflow_fingerprints_);
+        append_vector_size(overflow_slots_);
+
+        return result;
+    }
+
+    [[nodiscard]] static result<fch_hasher> deserialize(std::span<const std::byte> data) {
+        size_t offset = 0;
+
+        auto read_bytes = [&](void* out, size_t n) -> bool {
+            if (offset + n > data.size()) return false;
+            std::memcpy(out, data.data() + offset, n);
+            offset += n;
+            return true;
+        };
+
+        auto read_u32 = [&]() -> std::optional<uint32_t> {
+            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_i64 = [&]() -> std::optional<int64_t> {
+            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u64 = [&]() -> std::optional<uint64_t> {
+            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_size = [&]() -> std::optional<size_t> {
+            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_double = [&]() -> std::optional<double> {
+            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+
+        auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint32_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u32();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<int64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_i64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<uint64_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto size_opt = read_size();
+            if (!size_opt) return std::nullopt;
+            std::vector<size_t> vec;
+            vec.reserve(*size_opt);
+            for (size_t i = 0; i < *size_opt; ++i) {
+                auto v = read_size();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        // Verify header
+        auto magic = read_u32();
+        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
+
+        auto version = read_u32();
+        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
+
+        auto algo = read_u32();
+        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
+
+        // Read core data
+        auto key_count = read_size();
+        auto perfect_count = read_size();
+        auto num_buckets = read_size();
+        auto table_size = read_size();
+        auto bucket_size = read_double();
+        auto seed = read_u64();
+
+        if (!key_count || !perfect_count || !num_buckets || !table_size || !bucket_size || !seed) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        fch_hasher hasher(*key_count, *bucket_size, *seed);
+        hasher.perfect_count_ = *perfect_count;
+        hasher.num_buckets_ = *num_buckets;
+        hasher.table_size_ = *table_size;
+
+        // Read vectors
+        auto displacements = read_vector_u32();
+        auto slot_map = read_vector_i64();
+        auto fingerprints = read_vector_u64();
+        auto overflow_fingerprints = read_vector_u64();
+        auto overflow_slots = read_vector_size();
+
+        if (!displacements || !slot_map || !fingerprints || !overflow_fingerprints || !overflow_slots) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        hasher.displacements_ = std::move(*displacements);
+        hasher.slot_map_ = std::move(*slot_map);
+        hasher.fingerprints_ = std::move(*fingerprints);
+        hasher.overflow_fingerprints_ = std::move(*overflow_fingerprints);
+        hasher.overflow_slots_ = std::move(*overflow_slots);
+
+        return hasher;
+    }
 
     /**
      * @class builder
