@@ -161,6 +161,53 @@ std::cout << "Perfect ratio: " << (100.0 * stats.perfect_count / stats.key_count
 
 For typical use cases with <5% overflow, performance impact is negligible.
 
+### SIMD-Optimized Overflow Lookup
+
+Overflow key lookup is accelerated using AVX2 SIMD instructions when available:
+
+```cpp
+// AVX2 processes 4 fingerprints per cycle
+__m256i target_vec = _mm256_set1_epi64x(fingerprint);
+for (size_t i = 0; i + 4 <= overflow_size; i += 4) {
+    __m256i data_vec = _mm256_loadu_si256(...);
+    __m256i cmp = _mm256_cmpeq_epi64(data_vec, target_vec);
+    int mask = _mm256_movemask_epi8(cmp);
+    if (mask != 0) return find_match(mask, i);
+}
+```
+
+Performance impact:
+- ~4x speedup for overflow key lookups
+- Automatic fallback to scalar code on non-AVX2 systems
+- RecSplit lookup reduced from ~22ns to ~15ns with SIMD
+
+## Parallel Construction
+
+### RecSplit Parallel Build
+
+RecSplit supports multi-threaded construction for large key sets:
+
+```cpp
+auto hasher = recsplit8::builder{}
+    .add_all(keys)
+    .with_seed(12345)
+    .with_threads(4)  // Use 4 threads
+    .build().value();
+```
+
+How it works:
+1. Keys are distributed into buckets based on hash
+2. Each bucket is processed independently in parallel
+3. Results are merged into the final structure
+
+Activation criteria:
+- More than 100 buckets AND more than 1 thread configured
+- Below this threshold, single-threaded is faster due to thread overhead
+
+Performance:
+- ~4x speedup with 4 threads for 100k+ keys
+- Linear scaling up to available cores
+
 ## Implementation Strategy
 
 ### Phase 1: Core Infrastructure
@@ -200,21 +247,76 @@ For typical use cases with <5% overflow, performance impact is negligible.
 
 ## Serialization Format
 
-Each perfect hash function serializes to a common format:
+Each perfect hash function serializes to a binary format for persistence:
 
 ```
-Header (32 bytes):
-  - Magic: "MAPH" (4 bytes)
-  - Version: uint32_t (4 bytes)
-  - Algorithm Type: uint8_t (1 byte)
-  - Flags: uint8_t (1 byte)
-  - Key Count: uint64_t (8 bytes)
-  - Max Hash: uint64_t (8 bytes)
-  - Reserved: (6 bytes)
+Common Header:
+  - Magic: 0x4D415048 ("MAPH") - uint32_t (4 bytes)
+  - Version: 1 - uint32_t (4 bytes)
+  - Algorithm ID - uint32_t (4 bytes):
+      1 = RecSplit
+      2 = CHD
+      3 = BBHash
+      4 = FCH
 
-Algorithm-Specific Data:
-  - Variable length based on algorithm
-  - Self-describing format
+Algorithm-Specific Data follows...
+```
+
+### RecSplit Format
+```
+Header (12 bytes) + Algorithm Data:
+  - seed_: uint64_t (8 bytes)
+  - num_keys_: uint64_t (8 bytes)
+  - num_buckets_: uint64_t (8 bytes)
+  - splits_: [uint16_t...] (num_buckets * 2 bytes)
+  - keys_per_bucket_: [uint64_t...] (num_buckets * 8 bytes)
+  - fingerprints_: [uint64_t...] (num_keys * 8 bytes)
+  - overflow_fingerprints_: [uint64_t...] (overflow_count * 8 bytes)
+  - overflow_slots_: [uint64_t...] (overflow_count * 8 bytes)
+  - perfect_count_: uint64_t (8 bytes)
+```
+
+### CHD Format
+```
+Header (12 bytes) + Algorithm Data:
+  - seed_: uint64_t (8 bytes)
+  - num_buckets_: uint64_t (8 bytes)
+  - num_slots_: uint64_t (8 bytes)
+  - displacement_: [int32_t...] (num_buckets * 4 bytes)
+  - fingerprints_: [uint64_t...] (num_keys * 8 bytes)
+  - overflow data (same as RecSplit)
+```
+
+### BBHash Format
+```
+Header (12 bytes) + Algorithm Data:
+  - seed_: uint64_t (8 bytes)
+  - num_keys_: uint64_t (8 bytes)
+  - levels count: uint64_t (8 bytes)
+  - For each level:
+      - bitset size: uint64_t (8 bytes)
+      - bitset data: [uint64_t...] (size * 8 bytes)
+  - fingerprints and overflow data
+```
+
+### FCH Format
+```
+Header (12 bytes) + Algorithm Data:
+  - seed_: uint64_t (8 bytes)
+  - num_keys_: uint64_t (8 bytes)
+  - displacement_: [int32_t...] (num_buckets * 4 bytes)
+  - fingerprints and overflow data
+```
+
+### Deserialization
+```cpp
+// Example: Restore from bytes
+std::vector<std::byte> data = read_from_file("hasher.bin");
+auto result = recsplit8::deserialize(data);
+if (result.has_value()) {
+    auto& hasher = result.value();
+    auto slot = hasher.slot_for("key1");  // Ready to use
+}
 ```
 
 ## Benchmarking

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Serialization/Deserialization** for all perfect hash algorithms
+  - `serialize()` method returns `std::vector<std::byte>` for persistence
+  - `deserialize(std::span<const std::byte>)` static method to restore from bytes
+  - Format includes magic number, version, and algorithm type validation
+  - Supports RecSplit, CHD, BBHash, and FCH hashers
+- **Parallel Construction** for RecSplit
+  - New `with_threads(n)` builder method for multi-threaded construction
+  - Automatically uses parallel processing for >100 buckets with >1 thread
+  - Linear speedup for large key sets
+- **SIMD-Optimized Overflow Lookup**
+  - AVX2-accelerated fingerprint search for overflow keys
+  - Processes 4 fingerprints per cycle on supported hardware
+  - Automatic fallback to scalar code on non-AVX2 systems
+
+### Performance
+- RecSplit lookup: ~15ns (with SIMD overflow)
+- CHD lookup: ~12ns (with SIMD overflow)
+- Parallel construction up to 4x faster with 4 threads
+
 ## [3.1.0] - 2024-12-14
 
 ### Added
