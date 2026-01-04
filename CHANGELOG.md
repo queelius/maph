@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-01-04
+
 ### Added
 - **Serialization/Deserialization** for all perfect hash algorithms
   - `serialize()` method returns `std::vector<std::byte>` for persistence
