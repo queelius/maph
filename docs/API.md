@@ -1,3 +1,5 @@
+**Note:** This document describes the v1/v2 API which has been superseded by v3. See `include/maph/` headers for the current API.
+
 # RD-PH Filter API Documentation
 
 ## C++ API

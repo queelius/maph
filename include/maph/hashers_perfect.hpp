@@ -62,7 +62,16 @@ struct perfect_hash_stats {
 
 // Magic numbers for serialization format
 constexpr uint32_t PERFECT_HASH_MAGIC = 0x4D415048;  // "MAPH"
-constexpr uint32_t PERFECT_HASH_VERSION = 1;
+constexpr uint32_t PERFECT_HASH_VERSION = 2;
+
+// Serialization requires little-endian. All modern x86/ARM targets are LE.
+// If you need big-endian support, add byte-swap wrappers around read/write.
+static_assert(std::endian::native == std::endian::little,
+    "maph serialization assumes little-endian byte order");
+
+// Maximum element count allowed in a deserialized vector to prevent OOM
+// from crafted input. 2^40 elements (~1 trillion) is generous but bounded.
+constexpr uint64_t MAX_SERIALIZED_ELEMENT_COUNT = 1ULL << 40;
 
 // SIMD-optimized linear search for fingerprint in overflow array
 // Returns index if found, or size if not found
@@ -202,42 +211,6 @@ private:
         return hash_with_seed(key, bucket_seed) % buckets_[bucket_idx].num_keys;
     }
 
-    // Golomb-Rice encoding
-    static void encode_golomb_rice(std::vector<uint8_t>& out, uint64_t value, size_t k) {
-        // Simple implementation - production would use bit-level encoding
-        uint64_t q = value >> k;
-        uint64_t r = value & ((1ULL << k) - 1);
-
-        // Unary encode quotient
-        for (size_t i = 0; i < q; ++i) {
-            out.push_back(0);
-        }
-        out.push_back(1);
-
-        // Binary encode remainder
-        for (size_t i = 0; i < k; ++i) {
-            out.push_back((r >> i) & 1);
-        }
-    }
-
-    static uint64_t decode_golomb_rice(std::span<const uint8_t> data, size_t& offset, size_t k) {
-        // Decode unary quotient
-        uint64_t q = 0;
-        while (offset < data.size() && data[offset] == 0) {
-            ++q;
-            ++offset;
-        }
-        ++offset;  // Skip the 1
-
-        // Decode binary remainder
-        uint64_t r = 0;
-        for (size_t i = 0; i < k && offset < data.size(); ++i, ++offset) {
-            r |= (uint64_t{data[offset]} << i);
-        }
-
-        return (q << k) | r;
-    }
-
 public:
     recsplit_hasher() = default;
     recsplit_hasher(recsplit_hasher&&) = default;
@@ -330,23 +303,26 @@ public:
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> result;
 
-        // Helper to append values
+        // Helper to append fixed-width values
         auto append = [&](const auto& value) {
             auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
             result.insert(result.end(), bytes.begin(), bytes.end());
         };
 
+        // Always serialize counts as uint64_t for 32/64-bit portability
+        auto append_u64 = [&](uint64_t value) { append(value); };
+
         auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) {
                 append(v);
             }
         };
 
-        auto append_vector_size = [&](const std::vector<size_t>& vec) {
-            append(vec.size());
+        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) {
-                append(v);
+                append_u64(static_cast<uint64_t>(v));
             }
         };
 
@@ -356,24 +332,24 @@ public:
         append(ALGORITHM_ID);
         append(static_cast<uint32_t>(LeafSize));
 
-        // Core data
-        append(key_count_);
-        append(perfect_count_);
-        append(num_buckets_);
+        // Core data (all as uint64_t for portability)
+        append_u64(static_cast<uint64_t>(key_count_));
+        append_u64(static_cast<uint64_t>(perfect_count_));
+        append_u64(static_cast<uint64_t>(num_buckets_));
         append(base_seed_);
 
         // Buckets
-        append(buckets_.size());
+        append_u64(static_cast<uint64_t>(buckets_.size()));
         for (const auto& b : buckets_) {
             append(b.split);
-            append(b.num_keys);
+            append_u64(static_cast<uint64_t>(b.num_keys));
         }
 
         // Offsets, fingerprints, overflow
         append_vector_u64(bucket_offsets_);
         append_vector_u64(fingerprints_);
         append_vector_u64(overflow_fingerprints_);
-        append_vector_size(overflow_slots_);
+        append_vector_size_as_u64(overflow_slots_);
 
         return result;
     }
@@ -381,7 +357,6 @@ public:
     [[nodiscard]] static result<recsplit_hasher> deserialize(std::span<const std::byte> data) {
         size_t offset = 0;
 
-        // Helper to read a value of type T
         auto read_bytes = [&](void* out, size_t n) -> bool {
             if (offset + n > data.size()) return false;
             std::memcpy(out, data.data() + offset, n);
@@ -398,16 +373,17 @@ public:
         auto read_u64 = [&]() -> std::optional<uint64_t> {
             uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
-        auto read_size = [&]() -> std::optional<size_t> {
-            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
 
+        // Bounds-checked vector deserialization
         auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            // Sanity: count * 8 bytes must fit in remaining data
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<uint64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -415,15 +391,17 @@ public:
             return vec;
         };
 
-        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<size_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
-                auto v = read_size();
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
                 if (!v) return std::nullopt;
-                vec.push_back(*v);
+                vec.push_back(static_cast<size_t>(*v));
             }
             return vec;
         };
@@ -449,42 +427,52 @@ public:
             return std::unexpected(error::invalid_format);
         }
 
-        // Read core data
-        auto key_count = read_size();
-        auto perfect_count = read_size();
-        auto num_buckets = read_size();
+        // Read core data (all as uint64_t)
+        auto key_count_u64 = read_u64();
+        auto perfect_count_u64 = read_u64();
+        auto num_buckets_u64 = read_u64();
         auto base_seed = read_u64();
 
-        if (!key_count || !perfect_count || !num_buckets || !base_seed) {
+        if (!key_count_u64 || !perfect_count_u64 || !num_buckets_u64 || !base_seed) {
             return std::unexpected(error::invalid_format);
         }
+
+        // Bounds check on key_count
+        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        auto key_count = static_cast<size_t>(*key_count_u64);
+        auto perfect_count = static_cast<size_t>(*perfect_count_u64);
+        auto num_buckets = static_cast<size_t>(*num_buckets_u64);
 
         // Create hasher with reconstructed data
-        recsplit_hasher hasher(*key_count, *base_seed);
-        hasher.perfect_count_ = *perfect_count;
-        hasher.num_buckets_ = *num_buckets;
+        recsplit_hasher hasher(key_count, *base_seed);
+        hasher.perfect_count_ = perfect_count;
+        hasher.num_buckets_ = num_buckets;
 
         // Read buckets
-        auto bucket_count = read_size();
-        if (!bucket_count) {
+        auto bucket_count_u64 = read_u64();
+        if (!bucket_count_u64 || *bucket_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
-        hasher.buckets_.resize(*bucket_count);
-        for (size_t i = 0; i < *bucket_count; ++i) {
+        auto bucket_count = static_cast<size_t>(*bucket_count_u64);
+        hasher.buckets_.resize(bucket_count);
+        for (size_t i = 0; i < bucket_count; ++i) {
             auto split = read_u16();
-            auto num_keys = read_size();
-            if (!split || !num_keys) {
+            auto num_keys_u64 = read_u64();
+            if (!split || !num_keys_u64) {
                 return std::unexpected(error::invalid_format);
             }
             hasher.buckets_[i].split = *split;
-            hasher.buckets_[i].num_keys = *num_keys;
+            hasher.buckets_[i].num_keys = static_cast<size_t>(*num_keys_u64);
         }
 
         // Read vectors
         auto bucket_offsets = read_vector_u64();
         auto fingerprints = read_vector_u64();
         auto overflow_fingerprints = read_vector_u64();
-        auto overflow_slots = read_vector_size();
+        auto overflow_slots = read_vector_u64_as_size();
 
         if (!bucket_offsets || !fingerprints || !overflow_fingerprints || !overflow_slots) {
             return std::unexpected(error::invalid_format);
@@ -851,24 +839,26 @@ public:
             result.insert(result.end(), bytes.begin(), bytes.end());
         };
 
+        auto append_u64 = [&](uint64_t value) { append(value); };
+
         auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
         auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
         auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
-        auto append_vector_size = [&](const std::vector<size_t>& vec) {
-            append(vec.size());
-            for (const auto& v : vec) append(v);
+        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append_u64(static_cast<uint64_t>(v));
         };
 
         // Header
@@ -876,11 +866,11 @@ public:
         append(PERFECT_HASH_VERSION);
         append(ALGORITHM_ID);
 
-        // Core data
-        append(key_count_);
-        append(perfect_count_);
-        append(num_buckets_);
-        append(table_size_);
+        // Core data (size_t fields as uint64_t)
+        append_u64(static_cast<uint64_t>(key_count_));
+        append_u64(static_cast<uint64_t>(perfect_count_));
+        append_u64(static_cast<uint64_t>(num_buckets_));
+        append_u64(static_cast<uint64_t>(table_size_));
         append(lambda_);
         append(seed_);
 
@@ -889,7 +879,7 @@ public:
         append_vector_i64(slot_map_);
         append_vector_u64(fingerprints_);
         append_vector_u64(overflow_fingerprints_);
-        append_vector_size(overflow_slots_);
+        append_vector_size_as_u64(overflow_slots_);
 
         return result;
     }
@@ -913,19 +903,19 @@ public:
         auto read_u64 = [&]() -> std::optional<uint64_t> {
             uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
-        auto read_size = [&]() -> std::optional<size_t> {
-            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
         auto read_double = [&]() -> std::optional<double> {
             double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
 
+        // Bounds-checked vector deserialization
         auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint32_t)) return std::nullopt;
             std::vector<uint32_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u32();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -934,11 +924,13 @@ public:
         };
 
         auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
             std::vector<int64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_i64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -947,11 +939,13 @@ public:
         };
 
         auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<uint64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -959,15 +953,17 @@ public:
             return vec;
         };
 
-        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<size_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
-                auto v = read_size();
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
                 if (!v) return std::nullopt;
-                vec.push_back(*v);
+                vec.push_back(static_cast<size_t>(*v));
             }
             return vec;
         };
@@ -982,29 +978,33 @@ public:
         auto algo = read_u32();
         if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
 
-        // Read core data
-        auto key_count = read_size();
-        auto perfect_count = read_size();
-        auto num_buckets = read_size();
-        auto table_size = read_size();
+        // Read core data (all counts as uint64_t)
+        auto key_count_u64 = read_u64();
+        auto perfect_count_u64 = read_u64();
+        auto num_buckets_u64 = read_u64();
+        auto table_size_u64 = read_u64();
         auto lambda = read_double();
         auto seed = read_u64();
 
-        if (!key_count || !perfect_count || !num_buckets || !table_size || !lambda || !seed) {
+        if (!key_count_u64 || !perfect_count_u64 || !num_buckets_u64 || !table_size_u64 || !lambda || !seed) {
             return std::unexpected(error::invalid_format);
         }
 
-        chd_hasher hasher(*key_count, *lambda, *seed);
-        hasher.perfect_count_ = *perfect_count;
-        hasher.num_buckets_ = *num_buckets;
-        hasher.table_size_ = *table_size;
+        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        chd_hasher hasher(static_cast<size_t>(*key_count_u64), *lambda, *seed);
+        hasher.perfect_count_ = static_cast<size_t>(*perfect_count_u64);
+        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
 
         // Read vectors
         auto displacements = read_vector_u32();
         auto slot_map = read_vector_i64();
         auto fingerprints = read_vector_u64();
         auto overflow_fingerprints = read_vector_u64();
-        auto overflow_slots = read_vector_size();
+        auto overflow_slots = read_vector_u64_as_size();
 
         if (!displacements || !slot_map || !fingerprints || !overflow_fingerprints || !overflow_slots) {
             return std::unexpected(error::invalid_format);
@@ -1382,14 +1382,16 @@ public:
             result.insert(result.end(), bytes.begin(), bytes.end());
         };
 
+        auto append_u64 = [&](uint64_t value) { append(value); };
+
         auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
-        auto append_vector_size = [&](const std::vector<size_t>& vec) {
-            append(vec.size());
-            for (const auto& v : vec) append(v);
+        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append_u64(static_cast<uint64_t>(v));
         };
 
         // Header
@@ -1398,25 +1400,25 @@ public:
         append(ALGORITHM_ID);
         append(static_cast<uint32_t>(NumLevels));
 
-        // Core data
-        append(key_count_);
-        append(perfect_count_);
-        append(total_slots_);
+        // Core data (size_t fields as uint64_t)
+        append_u64(static_cast<uint64_t>(key_count_));
+        append_u64(static_cast<uint64_t>(perfect_count_));
+        append_u64(static_cast<uint64_t>(total_slots_));
         append(gamma_);
         append(base_seed_);
 
         // Levels
         for (const auto& level : levels_) {
             append_vector_u64(level.bits);
-            append_vector_size(level.rank_checkpoints);
-            append(level.num_keys);
+            append_vector_size_as_u64(level.rank_checkpoints);
+            append_u64(static_cast<uint64_t>(level.num_keys));
             append(level.seed);
         }
 
         // Fingerprints and overflow
         append_vector_u64(fingerprints_);
         append_vector_u64(overflow_fingerprints_);
-        append_vector_size(overflow_slots_);
+        append_vector_size_as_u64(overflow_slots_);
 
         return result;
     }
@@ -1437,19 +1439,19 @@ public:
         auto read_u64 = [&]() -> std::optional<uint64_t> {
             uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
-        auto read_size = [&]() -> std::optional<size_t> {
-            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
         auto read_double = [&]() -> std::optional<double> {
             double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
 
+        // Bounds-checked vector deserialization
         auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<uint64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -1457,15 +1459,17 @@ public:
             return vec;
         };
 
-        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<size_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
-                auto v = read_size();
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
                 if (!v) return std::nullopt;
-                vec.push_back(*v);
+                vec.push_back(static_cast<size_t>(*v));
             }
             return vec;
         };
@@ -1483,42 +1487,46 @@ public:
         auto num_levels = read_u32();
         if (!num_levels || *num_levels != NumLevels) return std::unexpected(error::invalid_format);
 
-        // Read core data
-        auto key_count = read_size();
-        auto perfect_count = read_size();
-        auto total_slots = read_size();
+        // Read core data (all counts as uint64_t)
+        auto key_count_u64 = read_u64();
+        auto perfect_count_u64 = read_u64();
+        auto total_slots_u64 = read_u64();
         auto gamma = read_double();
         auto base_seed = read_u64();
 
-        if (!key_count || !perfect_count || !total_slots || !gamma || !base_seed) {
+        if (!key_count_u64 || !perfect_count_u64 || !total_slots_u64 || !gamma || !base_seed) {
             return std::unexpected(error::invalid_format);
         }
 
-        bbhash_hasher hasher(*key_count, *gamma, *base_seed);
-        hasher.perfect_count_ = *perfect_count;
-        hasher.total_slots_ = *total_slots;
+        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        bbhash_hasher hasher(static_cast<size_t>(*key_count_u64), *gamma, *base_seed);
+        hasher.perfect_count_ = static_cast<size_t>(*perfect_count_u64);
+        hasher.total_slots_ = static_cast<size_t>(*total_slots_u64);
 
         // Read levels
         for (size_t i = 0; i < NumLevels; ++i) {
             auto bits = read_vector_u64();
-            auto rank_checkpoints = read_vector_size();
-            auto num_keys = read_size();
+            auto rank_checkpoints = read_vector_u64_as_size();
+            auto num_keys_u64 = read_u64();
             auto seed = read_u64();
 
-            if (!bits || !rank_checkpoints || !num_keys || !seed) {
+            if (!bits || !rank_checkpoints || !num_keys_u64 || !seed) {
                 return std::unexpected(error::invalid_format);
             }
 
             hasher.levels_[i].bits = std::move(*bits);
             hasher.levels_[i].rank_checkpoints = std::move(*rank_checkpoints);
-            hasher.levels_[i].num_keys = *num_keys;
+            hasher.levels_[i].num_keys = static_cast<size_t>(*num_keys_u64);
             hasher.levels_[i].seed = *seed;
         }
 
         // Read fingerprints and overflow
         auto fingerprints = read_vector_u64();
         auto overflow_fingerprints = read_vector_u64();
-        auto overflow_slots = read_vector_size();
+        auto overflow_slots = read_vector_u64_as_size();
 
         if (!fingerprints || !overflow_fingerprints || !overflow_slots) {
             return std::unexpected(error::invalid_format);
@@ -1534,12 +1542,15 @@ public:
     /**
      * @class builder
      * @brief Builder for BBHash perfect hash
+     *
+     * Note: BBHash level construction is inherently sequential (each level
+     * depends on knowing which keys collided at the previous level).
+     * Use RecSplit with_threads() for parallel construction.
      */
     class builder {
         std::vector<std::string> keys_;
         double gamma_{2.0};  // Default space parameter (2x space = faster)
         uint64_t seed_{0x123456789abcdef0ULL};
-        size_t num_threads_{1};  // Thread count for parallel build
 
     public:
         builder() = default;
@@ -1568,11 +1579,6 @@ public:
 
         builder& with_seed(uint64_t seed) {
             seed_ = seed;
-            return *this;
-        }
-
-        builder& with_threads(size_t threads) {
-            num_threads_ = std::max(size_t{1}, threads);
             return *this;
         }
 
@@ -1850,6 +1856,200 @@ public:
     [[nodiscard]] double bits_per_key() const noexcept { return statistics().bits_per_key; }
     [[nodiscard]] size_t memory_bytes() const noexcept { return statistics().memory_bytes; }
     [[nodiscard]] size_t num_buckets() const noexcept { return num_buckets_; }
+
+    // Algorithm identifier for serialization
+    static constexpr uint32_t ALGORITHM_ID = 5;  // PTHash
+
+    [[nodiscard]] std::vector<std::byte> serialize() const {
+        std::vector<std::byte> result;
+
+        auto append = [&](const auto& value) {
+            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
+            result.insert(result.end(), bytes.begin(), bytes.end());
+        };
+
+        auto append_u64 = [&](uint64_t value) { append(value); };
+
+        auto append_vector_u16 = [&](const std::vector<uint16_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append(v);
+        };
+
+        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append_u64(static_cast<uint64_t>(v));
+        };
+
+        // Header
+        append(PERFECT_HASH_MAGIC);
+        append(PERFECT_HASH_VERSION);
+        append(ALGORITHM_ID);
+        append(static_cast<uint32_t>(AlphaInt));
+
+        // Core data (size_t fields as uint64_t)
+        append_u64(static_cast<uint64_t>(key_count_));
+        append_u64(static_cast<uint64_t>(perfect_count_));
+        append_u64(static_cast<uint64_t>(num_buckets_));
+        append_u64(static_cast<uint64_t>(table_size_));
+        append(seed_);
+
+        // Vectors
+        append_vector_u16(pilots_.pilots);
+        append_vector_i64(slot_map_);
+        append_vector_u64(fingerprints_);
+        append_vector_u64(overflow_fingerprints_);
+        append_vector_size_as_u64(overflow_slots_);
+
+        return result;
+    }
+
+    [[nodiscard]] static result<pthash_hasher> deserialize(std::span<const std::byte> data) {
+        size_t offset = 0;
+
+        auto read_bytes = [&](void* out, size_t n) -> bool {
+            if (offset + n > data.size()) return false;
+            std::memcpy(out, data.data() + offset, n);
+            offset += n;
+            return true;
+        };
+
+        auto read_u16 = [&]() -> std::optional<uint16_t> {
+            uint16_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u32 = [&]() -> std::optional<uint32_t> {
+            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_i64 = [&]() -> std::optional<int64_t> {
+            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+        auto read_u64 = [&]() -> std::optional<uint64_t> {
+            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
+        };
+
+        // Bounds-checked vector deserialization
+        auto read_vector_u16 = [&]() -> std::optional<std::vector<uint16_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint16_t)) return std::nullopt;
+            std::vector<uint16_t> vec;
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u16();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
+            std::vector<int64_t> vec;
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_i64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
+            std::vector<uint64_t> vec;
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(*v);
+            }
+            return vec;
+        };
+
+        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
+            std::vector<size_t> vec;
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
+                if (!v) return std::nullopt;
+                vec.push_back(static_cast<size_t>(*v));
+            }
+            return vec;
+        };
+
+        // Verify header
+        auto magic = read_u32();
+        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
+
+        auto version = read_u32();
+        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
+
+        auto algo = read_u32();
+        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
+
+        auto alpha_int = read_u32();
+        if (!alpha_int || *alpha_int != AlphaInt) return std::unexpected(error::invalid_format);
+
+        // Read core data (all counts as uint64_t)
+        auto key_count_u64 = read_u64();
+        auto perfect_count_u64 = read_u64();
+        auto num_buckets_u64 = read_u64();
+        auto table_size_u64 = read_u64();
+        auto seed = read_u64();
+
+        if (!key_count_u64 || !perfect_count_u64 || !num_buckets_u64 || !table_size_u64 || !seed) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        pthash_hasher hasher(static_cast<size_t>(*key_count_u64), *seed);
+        hasher.perfect_count_ = static_cast<size_t>(*perfect_count_u64);
+        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
+
+        // Read vectors
+        auto pilots = read_vector_u16();
+        auto slot_map = read_vector_i64();
+        auto fingerprints = read_vector_u64();
+        auto overflow_fingerprints = read_vector_u64();
+        auto overflow_slots = read_vector_u64_as_size();
+
+        if (!pilots || !slot_map || !fingerprints || !overflow_fingerprints || !overflow_slots) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        hasher.pilots_.pilots = std::move(*pilots);
+        hasher.pilots_.num_buckets = hasher.num_buckets_;
+        hasher.slot_map_ = std::move(*slot_map);
+        hasher.fingerprints_ = std::move(*fingerprints);
+        hasher.overflow_fingerprints_ = std::move(*overflow_fingerprints);
+        hasher.overflow_slots_ = std::move(*overflow_slots);
+
+        return hasher;
+    }
 
     /**
      * @class builder
@@ -2195,24 +2395,26 @@ public:
             result.insert(result.end(), bytes.begin(), bytes.end());
         };
 
+        auto append_u64 = [&](uint64_t value) { append(value); };
+
         auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
         auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
         auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append(vec.size());
+            append_u64(static_cast<uint64_t>(vec.size()));
             for (const auto& v : vec) append(v);
         };
 
-        auto append_vector_size = [&](const std::vector<size_t>& vec) {
-            append(vec.size());
-            for (const auto& v : vec) append(v);
+        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
+            append_u64(static_cast<uint64_t>(vec.size()));
+            for (const auto& v : vec) append_u64(static_cast<uint64_t>(v));
         };
 
         // Header
@@ -2220,11 +2422,11 @@ public:
         append(PERFECT_HASH_VERSION);
         append(ALGORITHM_ID);
 
-        // Core data
-        append(key_count_);
-        append(perfect_count_);
-        append(num_buckets_);
-        append(table_size_);
+        // Core data (size_t fields as uint64_t)
+        append_u64(static_cast<uint64_t>(key_count_));
+        append_u64(static_cast<uint64_t>(perfect_count_));
+        append_u64(static_cast<uint64_t>(num_buckets_));
+        append_u64(static_cast<uint64_t>(table_size_));
         append(bucket_size_);
         append(seed_);
 
@@ -2233,7 +2435,7 @@ public:
         append_vector_i64(slot_map_);
         append_vector_u64(fingerprints_);
         append_vector_u64(overflow_fingerprints_);
-        append_vector_size(overflow_slots_);
+        append_vector_size_as_u64(overflow_slots_);
 
         return result;
     }
@@ -2257,19 +2459,19 @@ public:
         auto read_u64 = [&]() -> std::optional<uint64_t> {
             uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
-        auto read_size = [&]() -> std::optional<size_t> {
-            size_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
         auto read_double = [&]() -> std::optional<double> {
             double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
         };
 
+        // Bounds-checked vector deserialization
         auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint32_t)) return std::nullopt;
             std::vector<uint32_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u32();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -2278,11 +2480,13 @@ public:
         };
 
         auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
             std::vector<int64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_i64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -2291,11 +2495,13 @@ public:
         };
 
         auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<uint64_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
                 auto v = read_u64();
                 if (!v) return std::nullopt;
                 vec.push_back(*v);
@@ -2303,15 +2509,17 @@ public:
             return vec;
         };
 
-        auto read_vector_size = [&]() -> std::optional<std::vector<size_t>> {
-            auto size_opt = read_size();
-            if (!size_opt) return std::nullopt;
+        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
+            auto count_opt = read_u64();
+            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
+            auto count = static_cast<size_t>(*count_opt);
+            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
             std::vector<size_t> vec;
-            vec.reserve(*size_opt);
-            for (size_t i = 0; i < *size_opt; ++i) {
-                auto v = read_size();
+            vec.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                auto v = read_u64();
                 if (!v) return std::nullopt;
-                vec.push_back(*v);
+                vec.push_back(static_cast<size_t>(*v));
             }
             return vec;
         };
@@ -2326,29 +2534,33 @@ public:
         auto algo = read_u32();
         if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
 
-        // Read core data
-        auto key_count = read_size();
-        auto perfect_count = read_size();
-        auto num_buckets = read_size();
-        auto table_size = read_size();
+        // Read core data (all counts as uint64_t)
+        auto key_count_u64 = read_u64();
+        auto perfect_count_u64 = read_u64();
+        auto num_buckets_u64 = read_u64();
+        auto table_size_u64 = read_u64();
         auto bucket_size = read_double();
         auto seed = read_u64();
 
-        if (!key_count || !perfect_count || !num_buckets || !table_size || !bucket_size || !seed) {
+        if (!key_count_u64 || !perfect_count_u64 || !num_buckets_u64 || !table_size_u64 || !bucket_size || !seed) {
             return std::unexpected(error::invalid_format);
         }
 
-        fch_hasher hasher(*key_count, *bucket_size, *seed);
-        hasher.perfect_count_ = *perfect_count;
-        hasher.num_buckets_ = *num_buckets;
-        hasher.table_size_ = *table_size;
+        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        fch_hasher hasher(static_cast<size_t>(*key_count_u64), *bucket_size, *seed);
+        hasher.perfect_count_ = static_cast<size_t>(*perfect_count_u64);
+        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
 
         // Read vectors
         auto displacements = read_vector_u32();
         auto slot_map = read_vector_i64();
         auto fingerprints = read_vector_u64();
         auto overflow_fingerprints = read_vector_u64();
-        auto overflow_slots = read_vector_size();
+        auto overflow_slots = read_vector_u64_as_size();
 
         if (!displacements || !slot_map || !fingerprints || !overflow_fingerprints || !overflow_slots) {
             return std::unexpected(error::invalid_format);

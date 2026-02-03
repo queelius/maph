@@ -7,9 +7,25 @@ maph has gone through three major architectural iterations, each representing a 
 ## Version Timeline
 
 ```
-v0.7-0.9  →  v1.0  →  v2.0  →  v3.0  →  v3.1 (current)
-(2023)     (Jan 2024) (Mid 2024) (Sep 2024) (Dec 2024)
+v0.7-0.9  →  v1.0  →  v2.0  →  v3.0  →  v3.1  →  v3.2 (current)
+(2023)     (Jan 2024) (Mid 2024) (Sep 2024) (Dec 2024) (Feb 2025)
 ```
+
+## v3.2.0 (February 2025)
+
+### Added
+- Serialization/deserialization for all perfect hash algorithms (RecSplit, CHD, BBHash, FCH, PTHash)
+- Parallel construction support for RecSplit via `with_threads(n)`
+- SIMD-optimized overflow lookup using AVX2
+- Fingerprint-based membership verification
+
+### Fixed
+- Serialization now uses fixed-width `uint64_t` for cross-platform portability
+- Added bounds validation on deserialized data to prevent OOM from crafted input
+- Added endianness static_assert for serialization safety
+- Removed dead Golomb-Rice encoding code
+- Removed misleading `with_threads()` from BBHash builder (levels are inherently sequential)
+- Added thread-safety documentation to `cached_storage`
 
 ## Version 1 (v1.0.0) - Original Implementation
 

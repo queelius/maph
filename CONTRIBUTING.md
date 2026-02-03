@@ -70,7 +70,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 
 ### C++ Style Guide
 
-- **C++ Version**: Use C++17 features
+- **C++ Version**: Use C++20 (with C++23 features like std::expected)
 - **Naming Conventions**:
   - Classes: `PascalCase`
   - Functions/Methods: `snake_case`
@@ -176,7 +176,7 @@ maph is a high-performance library. When contributing:
 
 ### Prerequisites
 
-- C++17 compatible compiler (GCC 8+, Clang 7+, MSVC 2017+)
+- C++23 compatible compiler (GCC 13+, Clang 16+, MSVC 2022+)
 - CMake 3.14+
 - Optional: clang-format, clang-tidy, valgrind
 

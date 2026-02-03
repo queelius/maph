@@ -266,3 +266,18 @@ STATIC_REQUIRE(perfect_hash_builder<my_perfect_hasher::builder, my_perfect_hashe
 ## Credits
 
 Implemented as part of maph v3 architecture - policy-based perfect hash system with modern C++ idioms.
+
+## v3.2.0 Features
+
+### Serialization
+All perfect hash algorithms support `serialize()` and `deserialize()` methods for persistence:
+```cpp
+auto data = hasher.serialize();
+auto restored = recsplit8::deserialize(data);
+```
+
+### SIMD Overflow Lookup
+Overflow keys are searched using AVX2-optimized linear scan (`find_fingerprint_simd`), with automatic scalar fallback.
+
+### Parallel Construction
+RecSplit supports parallel bucket processing via `with_threads(n)`.

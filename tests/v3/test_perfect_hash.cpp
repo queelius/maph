@@ -558,7 +558,6 @@ TEST_CASE("BBHash: Builder fluent interface", "[perfect][bbhash]") {
         .add("c")
         .with_gamma(2.5)
         .with_seed(12345)
-        .with_threads(4)
         .build();
 
     REQUIRE(result.has_value());
@@ -1446,4 +1445,243 @@ TEST_CASE("Serialization: Invalid data handling", "[perfect][serialization]") {
         auto result = recsplit8::deserialize(serialized);
         REQUIRE_FALSE(result.has_value());
     }
+}
+
+// ===== PHASE 4: NEW TEST COVERAGE =====
+
+// --- T1: SIMD boundary tests ---
+
+TEST_CASE("SIMD overflow: boundary sizes", "[perfect][simd]") {
+    // Test find_fingerprint_simd with various sizes that exercise SIMD boundaries
+    // AVX2 processes 4 uint64_t at a time, so boundaries are at 0,1,2,3,4,5,7,9
+
+    for (size_t size : {size_t{0}, size_t{1}, size_t{2}, size_t{3}, size_t{4},
+                        size_t{5}, size_t{7}, size_t{9}, size_t{15}, size_t{16}}) {
+        SECTION("Size " + std::to_string(size)) {
+            std::vector<uint64_t> data(size);
+            for (size_t i = 0; i < size; ++i) {
+                data[i] = 100 + i;  // Distinct values starting at 100
+            }
+
+            // Find each element
+            for (size_t i = 0; i < size; ++i) {
+                auto result = find_fingerprint_simd(data.data(), data.size(), 100 + i);
+                REQUIRE(result == i);
+            }
+
+            // Not-found should return size
+            auto result = find_fingerprint_simd(data.data(), data.size(), 999);
+            REQUIRE(result == size);
+        }
+    }
+}
+
+TEST_CASE("SIMD overflow: duplicates", "[perfect][simd]") {
+    // With duplicate values, should return the first match
+    std::vector<uint64_t> data = {10, 20, 30, 20, 40};
+    auto result = find_fingerprint_simd(data.data(), data.size(), 20);
+    REQUIRE(result == 1);  // First occurrence at index 1
+}
+
+TEST_CASE("SIMD overflow: empty array", "[perfect][simd]") {
+    auto result = find_fingerprint_simd(nullptr, 0, 42);
+    REQUIRE(result == 0);  // size == 0, returns 0
+}
+
+// --- T2: Serialization edge cases ---
+
+TEST_CASE("Serialization: version mismatch", "[perfect][serialization]") {
+    auto keys = generate_random_keys(20);
+    auto hasher = recsplit8::builder{}.add_all(keys).build().value();
+    auto serialized = hasher.serialize();
+
+    // Corrupt the version field (bytes 4-7)
+    serialized[4] = std::byte{0xFF};
+    auto result = recsplit8::deserialize(serialized);
+    REQUIRE_FALSE(result.has_value());
+}
+
+TEST_CASE("Serialization: algorithm mismatch", "[perfect][serialization]") {
+    // Build a RecSplit hasher and try to deserialize as CHD
+    auto keys = generate_random_keys(20);
+    auto recsplit = recsplit8::builder{}.add_all(keys).build().value();
+    auto serialized = recsplit.serialize();
+
+    auto result = chd_hasher::deserialize(serialized);
+    REQUIRE_FALSE(result.has_value());
+}
+
+TEST_CASE("Serialization: single key round-trip", "[perfect][serialization]") {
+    // Edge case: single key
+    std::vector<std::string> keys = {"hello"};
+
+    SECTION("RecSplit") {
+        auto hasher = recsplit8::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+        auto restored = recsplit8::deserialize(serialized);
+        REQUIRE(restored.has_value());
+        REQUIRE(restored->slot_for("hello").has_value());
+    }
+
+    SECTION("CHD") {
+        auto hasher = chd_hasher::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+        auto restored = chd_hasher::deserialize(serialized);
+        REQUIRE(restored.has_value());
+        REQUIRE(restored->slot_for("hello").has_value());
+    }
+
+    SECTION("BBHash") {
+        auto hasher = bbhash3::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+        auto restored = bbhash3::deserialize(serialized);
+        REQUIRE(restored.has_value());
+        REQUIRE(restored->slot_for("hello").has_value());
+    }
+
+    SECTION("FCH") {
+        auto hasher = fch_hasher::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+        auto restored = fch_hasher::deserialize(serialized);
+        REQUIRE(restored.has_value());
+        REQUIRE(restored->slot_for("hello").has_value());
+    }
+
+    SECTION("PTHash") {
+        auto hasher = pthash98::builder{}.add_all(keys).build().value();
+        auto serialized = hasher.serialize();
+        auto restored = pthash98::deserialize(serialized);
+        REQUIRE(restored.has_value());
+        REQUIRE(restored->slot_for("hello").has_value());
+    }
+}
+
+TEST_CASE("Serialization: PTHash round-trip", "[perfect][serialization][pthash]") {
+    auto keys = generate_random_keys(50);
+
+    auto original = pthash98::builder{}.add_all(keys).build().value();
+
+    auto serialized = original.serialize();
+    REQUIRE(serialized.size() > 0);
+
+    auto restored = pthash98::deserialize(serialized);
+    REQUIRE(restored.has_value());
+
+    for (const auto& key : keys) {
+        auto orig_slot = original.slot_for(key);
+        auto rest_slot = restored->slot_for(key);
+        REQUIRE(orig_slot.has_value());
+        REQUIRE(rest_slot.has_value());
+        REQUIRE(orig_slot->value == rest_slot->value);
+    }
+}
+
+TEST_CASE("Serialization: oversized count rejection", "[perfect][serialization]") {
+    // Craft data with a valid header but absurd element count
+    std::vector<std::byte> data;
+    auto append = [&](auto val) {
+        auto bytes = std::bit_cast<std::array<std::byte, sizeof(val)>>(val);
+        data.insert(data.end(), bytes.begin(), bytes.end());
+    };
+
+    // Valid header
+    append(PERFECT_HASH_MAGIC);
+    append(PERFECT_HASH_VERSION);
+    append(recsplit8::ALGORITHM_ID);
+    append(uint32_t{8});  // LeafSize
+
+    // Core fields
+    append(uint64_t{10});   // key_count
+    append(uint64_t{10});   // perfect_count
+    append(uint64_t{5});    // num_buckets
+    append(uint64_t{42});   // base_seed
+
+    // Absurd bucket count that would cause OOM
+    append(uint64_t{0xFFFFFFFFFFFFULL});  // 2^48 buckets
+
+    auto result = recsplit8::deserialize(data);
+    REQUIRE_FALSE(result.has_value());
+}
+
+TEST_CASE("Serialization: truncated at various points", "[perfect][serialization]") {
+    auto keys = generate_random_keys(30);
+    auto hasher = chd_hasher::builder{}.add_all(keys).build().value();
+    auto full = hasher.serialize();
+
+    // Try truncating at different fractions
+    for (double frac : {0.0, 0.1, 0.25, 0.5, 0.75, 0.9}) {
+        auto truncated = full;
+        truncated.resize(static_cast<size_t>(full.size() * frac));
+        auto result = chd_hasher::deserialize(truncated);
+        REQUIRE_FALSE(result.has_value());
+    }
+}
+
+// --- T3: Parallel construction stress ---
+
+TEST_CASE("RecSplit: parallel construction stress", "[perfect][recsplit][parallel]") {
+    auto keys = generate_random_keys(1000);
+
+    // Test with various thread counts
+    for (size_t threads : {size_t{1}, size_t{2}, size_t{4}, size_t{8}}) {
+        SECTION(std::to_string(threads) + " threads") {
+            auto result = recsplit8::builder{}
+                .add_all(keys)
+                .with_seed(42)
+                .with_threads(threads)
+                .build();
+
+            REQUIRE(result.has_value());
+
+            // Every key should be found
+            for (const auto& key : keys) {
+                auto slot = result->slot_for(key);
+                REQUIRE(slot.has_value());
+            }
+
+            // Slots should be unique (perfect hash property)
+            std::set<uint64_t> slots;
+            for (const auto& key : keys) {
+                slots.insert(result->slot_for(key)->value);
+            }
+            REQUIRE(slots.size() == keys.size());
+        }
+    }
+}
+
+// --- T4: Factory function correctness ---
+
+TEST_CASE("Factory: make_recsplit correctness", "[perfect][factory]") {
+    auto keys = generate_sequential_keys(100);
+    auto result = make_recsplit(keys);
+    REQUIRE(result.has_value());
+    REQUIRE(verify_perfect_hash(result.value(), keys));
+}
+
+TEST_CASE("Factory: make_chd correctness", "[perfect][factory]") {
+    auto keys = generate_sequential_keys(100);
+    auto result = make_chd(keys);
+    REQUIRE(result.has_value());
+    REQUIRE(verify_perfect_hash(result.value(), keys));
+}
+
+TEST_CASE("Factory: make_bbhash correctness", "[perfect][factory]") {
+    auto keys = generate_sequential_keys(100);
+    auto result = make_bbhash(keys);
+    REQUIRE(result.has_value());
+    REQUIRE(verify_perfect_hash(result.value(), keys));
+}
+
+TEST_CASE("Factory: make_pthash correctness", "[perfect][factory]") {
+    auto keys = generate_sequential_keys(50);
+    auto result = make_pthash(keys);
+    REQUIRE(result.has_value());
+    REQUIRE(verify_perfect_hash(result.value(), keys));
+}
+
+TEST_CASE("Factory: make_fch correctness", "[perfect][factory]") {
+    auto keys = generate_sequential_keys(100);
+    auto result = make_fch(keys);
+    REQUIRE(result.has_value());
+    REQUIRE(verify_perfect_hash(result.value(), keys));
 }

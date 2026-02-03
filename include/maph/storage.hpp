@@ -304,7 +304,11 @@ private:
  * @class cached_storage
  * @brief Decorator that adds caching to any storage backend
  *
- * Composable caching layer - works with any storage
+ * Composable caching layer - works with any storage.
+ *
+ * @warning NOT thread-safe. The internal cache (mutable unordered_map) is not
+ * protected by any synchronization. If concurrent access is needed, wrap this
+ * class with external locking or use one instance per thread.
  */
 template<typename S>
 class cached_storage {

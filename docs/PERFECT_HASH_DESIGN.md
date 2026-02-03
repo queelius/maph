@@ -18,7 +18,7 @@ This document describes the policy-based design for perfect hash functions in ma
 
 | Algorithm | Type | Space | Build Time | Query Time | Features |
 |-----------|------|-------|------------|------------|----------|
-| **RecSplit** | Minimal | 1.8-2.0 bits/key | O(n) | O(1) | Cache-friendly, SIMD |
+| **RecSplit** | Minimal | 1.8-2.0 bits/key theoretical (~50-100 in current impl) | O(n) | O(1) | Cache-friendly, SIMD |
 | **CHD** | Minimal | 2.0-2.5 bits/key | O(n) | O(1) | Classic, well-tested |
 | **BBHash** | Minimal | 2.0-3.0 bits/key | O(n) parallel | O(1) | Parallel construction |
 | **PTHash** | Minimal | 2.0-2.2 bits/key | O(n) | O(1) | Recent, very fast |
@@ -306,6 +306,14 @@ Header (12 bytes) + Algorithm Data:
   - num_keys_: uint64_t (8 bytes)
   - displacement_: [int32_t...] (num_buckets * 4 bytes)
   - fingerprints and overflow data
+```
+
+### PTHash (Algorithm ID: 5)
+```
+Format: [header][key_count:u64][perfect_count:u64][num_buckets:u64]
+        [table_size:u64][seed:u64][pilots:vec<u16>][slot_map:vec<i64>]
+        [fingerprints:vec<u64>][overflow_fingerprints:vec<u64>]
+        [overflow_slots:vec<u64>]
 ```
 
 ### Deserialization

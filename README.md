@@ -1,6 +1,6 @@
 # maph - Memory-Mapped Approximate Perfect Hash
 
-[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/std/the-standard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A high-performance, memory-mapped database and generalized framework for space-efficient approximate data structures with O(1) lookups. Built on perfect hash functions, maph provides sub-microsecond access to arbitrary mappings (f: X → Y) with configurable storage and custom decoders.

@@ -555,3 +555,40 @@ TEST_CASE("Hasher concept integration", "[hashers][concepts]") {
         REQUIRE_NOTHROW(test_hasher_concept(probe_hasher, "concept_test"));
     }
 }
+
+// ===== MINIMAL PERFECT HASHER SERIALIZATION =====
+
+TEST_CASE("minimal_perfect_hasher: serialize/deserialize round-trip", "[hashers][serialization]") {
+    auto result = minimal_perfect_hasher::builder{}
+        .add("alpha")
+        .add("beta")
+        .add("gamma")
+        .build();
+    REQUIRE(result.has_value());
+
+    auto& hasher = result.value();
+
+    auto serialized = hasher.serialize();
+    REQUIRE(serialized.size() > 0);
+
+    auto restored = minimal_perfect_hasher::deserialize(serialized);
+    REQUIRE(restored.has_value());
+
+    // Verify all keys round-trip correctly
+    for (auto key : {"alpha", "beta", "gamma"}) {
+        auto orig_slot = hasher.slot_for(key);
+        auto rest_slot = restored->slot_for(key);
+        REQUIRE(orig_slot.has_value());
+        REQUIRE(rest_slot.has_value());
+        REQUIRE(orig_slot->value == rest_slot->value);
+    }
+
+    // Unknown keys should still not be found
+    REQUIRE_FALSE(restored->is_perfect_for("delta"));
+}
+
+TEST_CASE("minimal_perfect_hasher: deserialize empty data", "[hashers][serialization]") {
+    std::vector<std::byte> empty;
+    auto result = minimal_perfect_hasher::deserialize(empty);
+    REQUIRE_FALSE(result.has_value());
+}

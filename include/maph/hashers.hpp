@@ -10,6 +10,8 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <cstring>
+#include <span>
 #include <unordered_map>
 
 namespace maph {
@@ -293,13 +295,69 @@ inline std::vector<std::byte> minimal_perfect_hasher::serialize() const {
 }
 
 inline result<minimal_perfect_hasher> minimal_perfect_hasher::deserialize(std::span<const std::byte> data) {
-    // Simplified deserialization
-    if (data.size() < sizeof(uint64_t)) {
+    size_t offset = 0;
+
+    auto read_bytes = [&](void* out, size_t n) -> bool {
+        if (offset + n > data.size()) return false;
+        std::memcpy(out, data.data() + offset, n);
+        offset += n;
+        return true;
+    };
+
+    // Read slot count
+    uint64_t total_slots = 0;
+    if (!read_bytes(&total_slots, sizeof(total_slots))) {
         return std::unexpected(error::invalid_format);
     }
 
-    // This is a stub - full implementation would parse the serialized format
-    return std::unexpected(error::invalid_format);
+    auto p = std::make_unique<impl>(static_cast<size_t>(total_slots));
+
+    // Read key mappings until we run out of data
+    while (offset < data.size()) {
+        // Key length
+        size_t len = 0;
+        if (!read_bytes(&len, sizeof(len))) break;
+
+        // Bounds check
+        if (len > data.size() - offset) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        // Key data
+        std::string key(len, '\0');
+        if (!read_bytes(key.data(), len)) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        // Slot index
+        slot_index slot{0};
+        if (!read_bytes(&slot.value, sizeof(slot.value))) {
+            return std::unexpected(error::invalid_format);
+        }
+
+        p->key_to_slot_[std::move(key)] = slot;
+    }
+
+    // Recompute slot hashes
+    auto compute_hash = [](std::string_view key) -> hash_value {
+        constexpr uint64_t fnv_offset_basis = 14695981039346656037ULL;
+        constexpr uint64_t fnv_prime = 1099511628211ULL;
+        uint64_t h = fnv_offset_basis;
+        for (unsigned char c : key) {
+            h ^= c;
+            h *= fnv_prime;
+        }
+        return hash_value{h ? h : 1};
+    };
+
+    p->slot_hashes_.resize(total_slots, hash_value{0});
+    for (const auto& [key, slot] : p->key_to_slot_) {
+        if (slot.value < total_slots) {
+            p->slot_hashes_[slot.value] = compute_hash(key);
+        }
+    }
+
+    return minimal_perfect_hasher{std::move(p)};
 }
 
 } // namespace maph

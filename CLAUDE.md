@@ -33,7 +33,7 @@ The v3 architecture follows these principles:
    - Interface defined by `hasher` concept
 
 3. **hashers_perfect.hpp**: Production-ready perfect hash implementations
-   - **RecSplit**: Simplified bucket-split algorithm (~8 bits/key in current impl)
+   - **RecSplit**: Simplified bucket-split algorithm (~50-100 bits/key in current impl due to fingerprint storage)
    - **CHD**: Classic Compress-Hash-Displace algorithm
    - **BBHash**: Multi-level collision resolution with O(1) rank queries
    - **FCH**: Fox-Chazelle-Heath algorithm
@@ -211,8 +211,8 @@ make -j
 
 ### C++ Standard Requirements
 
-- **v3 requires C++20** (concepts) with C++23 features (`std::expected`)
-- GCC 11+ or Clang 14+ recommended
+- **v3 requires C++23** (uses concepts from C++20 and std::expected from C++23)
+- GCC 13+ or Clang 16+ recommended
 - Template metaprogramming for zero-cost abstractions
 
 ### Header-Only Library
@@ -242,7 +242,7 @@ make -j
 
 | Algorithm | Status | Notes |
 |-----------|--------|-------|
-| RecSplit | ✅ Working | Simplified impl, ~8 bits/key |
+| RecSplit | ✅ Working | Simplified impl, ~50-100 bits/key |
 | CHD | ✅ Working | Classic algorithm, well-tested |
 | BBHash | ✅ Working | Optimized with O(1) rank queries |
 | FCH | ✅ Working | Simple, educational |
@@ -263,11 +263,10 @@ auto recsplit = recsplit8::builder{}
     .with_seed(12345)
     .build().value();
 
-// BBHash - Fast queries with parallel construction
+// BBHash - Fast queries
 auto bbhash = bbhash3::builder{}
     .add_all(keys)
     .with_gamma(2.0)
-    .with_threads(4)
     .build().value();
 
 // CHD - Classic, reliable
