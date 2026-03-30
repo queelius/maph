@@ -258,3 +258,80 @@ TEST_CASE("xor_filter: edge cases", "[membership][xor]") {
         for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
     }
 }
+
+// ===== RIBBON FILTER TESTS =====
+
+TEST_CASE("ribbon_filter: all widths verify known keys", "[membership][ribbon]") {
+    auto keys = make_keys(500);
+
+    SECTION("8-bit") {
+        ribbon_filter<8> rf;
+        REQUIRE(rf.build(keys));
+        for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
+        double bpk = rf.bits_per_key(keys.size());
+        INFO("8-bit bits/key: " << bpk);
+        REQUIRE(bpk > 7.0);
+        REQUIRE(bpk < 11.0);
+    }
+
+    SECTION("16-bit") {
+        ribbon_filter<16> rf;
+        REQUIRE(rf.build(keys));
+        for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
+        double bpk = rf.bits_per_key(keys.size());
+        INFO("16-bit bits/key: " << bpk);
+        REQUIRE(bpk > 14.0);
+        REQUIRE(bpk < 20.0);
+    }
+
+    SECTION("32-bit") {
+        ribbon_filter<32> rf;
+        REQUIRE(rf.build(keys));
+        for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
+    }
+}
+
+TEST_CASE("ribbon_filter: FP rate within statistical bounds", "[membership][ribbon]") {
+    auto keys = make_keys(1000);
+    auto unknowns = make_unknowns(100000);
+
+    ribbon_filter<16> rf;
+    REQUIRE(rf.build(keys));
+
+    size_t fps = 0;
+    for (const auto& uk : unknowns) { if (rf.verify(uk)) ++fps; }
+
+    double fp_rate = static_cast<double>(fps) / unknowns.size();
+    double expected = 1.0 / 65536.0;
+    double stddev = std::sqrt(expected * (1.0 - expected) / static_cast<double>(unknowns.size()));
+    INFO("FP rate: " << fp_rate << ", expected: " << expected << " +/- " << (3 * stddev));
+    REQUIRE(fp_rate < expected + 3 * stddev);
+}
+
+TEST_CASE("ribbon_filter: serialization round-trip", "[membership][ribbon]") {
+    auto keys = make_keys(500);
+    ribbon_filter<16> original;
+    REQUIRE(original.build(keys));
+
+    auto bytes = original.serialize();
+    auto restored = ribbon_filter<16>::deserialize(bytes);
+    REQUIRE(restored.has_value());
+    for (const auto& key : keys) { REQUIRE(restored->verify(key)); }
+}
+
+TEST_CASE("ribbon_filter: edge cases", "[membership][ribbon]") {
+    SECTION("Small key set") {
+        std::vector<std::string> keys = {"alpha", "beta", "gamma"};
+        ribbon_filter<8> rf;
+        REQUIRE(rf.build(keys));
+        for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
+    }
+
+    SECTION("Very long keys") {
+        std::vector<std::string> keys;
+        for (int i = 0; i < 20; ++i) keys.push_back(std::string(1000, 'a' + i));
+        ribbon_filter<16> rf;
+        REQUIRE(rf.build(keys));
+        for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
+    }
+}
