@@ -40,10 +40,16 @@ add_executable(bench_perfect_hash_compare bench_perfect_hash_compare.cpp)
 target_link_libraries(bench_perfect_hash_compare PRIVATE benchmark_utils)
 target_compile_options(bench_perfect_hash_compare PRIVATE -O3 -march=native)
 
+# Membership verification strategy benchmark
+add_executable(bench_membership bench_membership.cpp)
+target_link_libraries(bench_membership PRIVATE benchmark_utils)
+target_compile_options(bench_membership PRIVATE -O3 -march=native)
+
 # Link OpenMP if available
 if(OpenMP_CXX_FOUND)
     target_link_libraries(bench_throughput PRIVATE OpenMP::OpenMP_CXX)
     target_link_libraries(bench_all PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(bench_membership PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 # Enable AVX2 if available
@@ -56,4 +62,5 @@ if(COMPILER_SUPPORTS_AVX2)
     target_compile_options(bench_comparison PRIVATE -mavx2)
     target_compile_options(bench_perfect_hash PRIVATE -mavx2)
     target_compile_options(bench_all PRIVATE -mavx2)
+    target_compile_options(bench_membership PRIVATE -mavx2)
 endif()
