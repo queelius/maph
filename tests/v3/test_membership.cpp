@@ -335,3 +335,47 @@ TEST_CASE("ribbon_filter: edge cases", "[membership][ribbon]") {
         for (const auto& key : keys) { REQUIRE(rf.verify(key)); }
     }
 }
+
+// ===== CONFIGURABLE VERIFIER TESTS =====
+
+TEST_CASE("fingerprint_verifier: 16-bit default", "[membership][configurable]") {
+    auto keys = make_keys(200);
+    auto fix = recsplit_fixture::create(keys);
+
+    fingerprint_verifier<16> fv;
+    fv.build(keys, fix.slot_fn, keys.size());
+
+    for (const auto& key : keys) {
+        auto slot = fix.slot_fn(key);
+        REQUIRE(slot.has_value());
+        REQUIRE(fv.verify(key, *slot));
+    }
+}
+
+TEST_CASE("fingerprint_verifier: disabled (0 bits)", "[membership][configurable]") {
+    fingerprint_verifier<0> fv;
+    fv.build({}, [](std::string_view) { return std::optional<size_t>{}; }, 0);
+
+    REQUIRE(fv.verify("anything", 0));
+    REQUIRE(fv.verify("not_a_real_key", 42));
+    REQUIRE(fv.bits_per_key(100) == 0.0);
+    REQUIRE(fv.memory_bytes() == 0);
+}
+
+TEST_CASE("fingerprint_verifier: serialization round-trip", "[membership][configurable]") {
+    auto keys = make_keys(200);
+    auto fix = recsplit_fixture::create(keys);
+
+    fingerprint_verifier<16> original;
+    original.build(keys, fix.slot_fn, keys.size());
+
+    auto bytes = original.serialize();
+    auto restored = fingerprint_verifier<16>::deserialize(bytes);
+    REQUIRE(restored.has_value());
+
+    for (const auto& key : keys) {
+        auto slot = fix.slot_fn(key);
+        REQUIRE(slot.has_value());
+        REQUIRE(restored->verify(key, *slot));
+    }
+}

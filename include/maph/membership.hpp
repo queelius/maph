@@ -544,4 +544,69 @@ public:
     }
 };
 
+// ===== STRATEGY 4: CONFIGURABLE FINGERPRINT VERIFIER =====
+
+/**
+ * @class fingerprint_verifier
+ * @brief Policy wrapper with configurable fingerprint width
+ *
+ * Wraps packed_fingerprint_array. Set FingerprintBits=0 to disable
+ * verification entirely. This is the integration interface for
+ * production perfect hashers.
+ *
+ * @tparam FingerprintBits 0 (disabled), 8, 16, or 32
+ */
+template<unsigned FingerprintBits>
+    requires (FingerprintBits == 0 || FingerprintBits == 8 || FingerprintBits == 16 || FingerprintBits == 32)
+class fingerprint_verifier {
+    packed_fingerprint_array<FingerprintBits> inner_;
+
+public:
+    void build(const std::vector<std::string>& keys,
+               std::function<std::optional<size_t>(std::string_view)> slot_for,
+               size_t total_slots) {
+        inner_.build(keys, slot_for, total_slots);
+    }
+
+    [[nodiscard]] bool verify(std::string_view key, size_t slot) const noexcept {
+        return inner_.verify(key, slot);
+    }
+
+    [[nodiscard]] double bits_per_key(size_t key_count) const noexcept {
+        return inner_.bits_per_key(key_count);
+    }
+
+    [[nodiscard]] size_t memory_bytes() const noexcept {
+        return inner_.memory_bytes();
+    }
+
+    [[nodiscard]] std::vector<std::byte> serialize() const { return inner_.serialize(); }
+
+    [[nodiscard]] static std::optional<fingerprint_verifier> deserialize(std::span<const std::byte> bytes) {
+        auto inner = packed_fingerprint_array<FingerprintBits>::deserialize(bytes);
+        if (!inner) return std::nullopt;
+        fingerprint_verifier r;
+        r.inner_ = std::move(*inner);
+        return r;
+    }
+};
+
+// Specialization: disabled (0 bits)
+template<>
+class fingerprint_verifier<0> {
+public:
+    void build(const std::vector<std::string>&,
+               std::function<std::optional<size_t>(std::string_view)>,
+               size_t) {}
+
+    [[nodiscard]] bool verify(std::string_view, size_t) const noexcept { return true; }
+    [[nodiscard]] double bits_per_key(size_t) const noexcept { return 0.0; }
+    [[nodiscard]] size_t memory_bytes() const noexcept { return 0; }
+    [[nodiscard]] std::vector<std::byte> serialize() const { return {}; }
+
+    [[nodiscard]] static std::optional<fingerprint_verifier> deserialize(std::span<const std::byte>) {
+        return fingerprint_verifier{};
+    }
+};
+
 } // namespace maph
