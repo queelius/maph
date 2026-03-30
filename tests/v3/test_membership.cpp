@@ -116,7 +116,9 @@ TEST_CASE("packed_fingerprint_array: FP rate within statistical bounds", "[membe
 
     size_t false_positives = 0;
     for (const auto& uk : unknowns) {
-        size_t arbitrary_slot = fix.hasher.hash(uk).value % keys.size();
+        // Use independent hash for slot distribution (not recsplit, which
+        // returns a sentinel for unknown keys causing all to map to slot 0)
+        size_t arbitrary_slot = membership_fingerprint(uk) % keys.size();
         if (pfa.verify(uk, arbitrary_slot)) ++false_positives;
     }
 

@@ -400,9 +400,10 @@ else()
     add_test(NAME v3_properties COMMAND test_v3_properties)
     add_test(NAME v3_perfect_hash COMMAND test_v3_perfect_hash)
     add_test(NAME v3_comprehensive COMMAND test_v3_comprehensive)
+    add_test(NAME v3_membership COMMAND test_v3_membership)
 
     # Set timeouts
-    set_tests_properties(v3_core v3_hashers v3_storage v3_table v3_perfect_hash PROPERTIES TIMEOUT 300)
+    set_tests_properties(v3_core v3_hashers v3_storage v3_table v3_perfect_hash v3_membership PROPERTIES TIMEOUT 300)
     set_tests_properties(v3_integration v3_properties PROPERTIES TIMEOUT 600)
     set_tests_properties(v3_comprehensive PROPERTIES TIMEOUT 900)
 endif()

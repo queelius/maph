@@ -121,13 +121,13 @@ bench_result run_packed(const std::vector<std::string>& keys,
     rng.seed(456);
     auto us = measure([&](size_t) {
         auto& k = unknowns[ud(rng)];
-        volatile bool v = pfa.verify(k, hasher.hash(k).value % keys.size()); (void)v;
+        volatile bool v = pfa.verify(k, membership_fingerprint(k) % keys.size()); (void)v;
     }, qi);
 
     size_t fps = 0;
     size_t fp_trials = std::min(unknowns.size(), size_t{1000000});
     for (size_t i = 0; i < fp_trials; ++i) {
-        if (pfa.verify(unknowns[i], hasher.hash(unknowns[i]).value % keys.size())) ++fps;
+        if (pfa.verify(unknowns[i], membership_fingerprint(unknowns[i]) % keys.size())) ++fps;
     }
 
     return {"packed", FPBits, keys.size(), pfa.bits_per_key(keys.size()),
@@ -214,13 +214,13 @@ bench_result run_configurable(const std::vector<std::string>& keys,
     rng.seed(456);
     auto us = measure([&](size_t) {
         auto& k = unknowns[ud(rng)];
-        volatile bool v = fv.verify(k, hasher.hash(k).value % keys.size()); (void)v;
+        volatile bool v = fv.verify(k, membership_fingerprint(k) % keys.size()); (void)v;
     }, qi);
 
     size_t fps = 0;
     size_t fp_trials = std::min(unknowns.size(), size_t{1000000});
     for (size_t i = 0; i < fp_trials; ++i) {
-        if (fv.verify(unknowns[i], hasher.hash(unknowns[i]).value % keys.size())) ++fps;
+        if (fv.verify(unknowns[i], membership_fingerprint(unknowns[i]) % keys.size())) ++fps;
     }
 
     return {"configurable", FPBits, keys.size(), fv.bits_per_key(keys.size()),
