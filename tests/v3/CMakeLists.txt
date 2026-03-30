@@ -212,6 +212,25 @@ target_include_directories(test_v3_perfect_hash_extended
 
 target_compile_features(test_v3_perfect_hash_extended PRIVATE cxx_std_${V3_CXX_STANDARD})
 
+# Membership verification strategy tests
+add_executable(test_v3_membership
+    test_membership.cpp
+)
+
+target_link_libraries(test_v3_membership
+    PRIVATE
+    maph
+    Catch2::Catch2WithMain
+    pthread
+)
+
+target_include_directories(test_v3_membership
+    PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_compile_features(test_v3_membership PRIVATE cxx_std_${V3_CXX_STANDARD})
+
 # Comprehensive test suite (all tests in one executable)
 add_executable(test_v3_comprehensive
     test_core.cpp
@@ -248,6 +267,7 @@ if(ENABLE_COVERAGE)
         test_v3_integration
         test_v3_properties
         test_v3_perfect_hash
+        test_v3_membership
         test_v3_comprehensive
     )
 
@@ -358,6 +378,11 @@ if(EXISTS ${catch2_SOURCE_DIR}/extras/Catch.cmake)
 
     catch_discover_tests(test_v3_perfect_hash
         TEST_PREFIX "v3_perfect_hash:"
+        PROPERTIES TIMEOUT 300
+    )
+
+    catch_discover_tests(test_v3_membership
+        TEST_PREFIX "v3_membership:"
         PROPERTIES TIMEOUT 300
     )
 
