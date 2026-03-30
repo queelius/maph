@@ -181,3 +181,80 @@ TEST_CASE("packed_fingerprint_array: edge cases", "[membership][packed]") {
         }
     }
 }
+
+// ===== XOR FILTER TESTS =====
+
+TEST_CASE("xor_filter: all widths verify known keys", "[membership][xor]") {
+    auto keys = make_keys(1000);
+
+    SECTION("8-bit") {
+        xor_filter<8> xf;
+        REQUIRE(xf.build(keys));
+        for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
+        double bpk = xf.bits_per_key(keys.size());
+        INFO("8-bit bits/key: " << bpk);
+        REQUIRE(bpk > 7.0);
+        REQUIRE(bpk < 12.0);  // ~1.23 * 8 = 9.84
+    }
+
+    SECTION("16-bit") {
+        xor_filter<16> xf;
+        REQUIRE(xf.build(keys));
+        for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
+        double bpk = xf.bits_per_key(keys.size());
+        INFO("16-bit bits/key: " << bpk);
+        REQUIRE(bpk > 14.0);
+        REQUIRE(bpk < 22.0);
+    }
+
+    SECTION("32-bit") {
+        xor_filter<32> xf;
+        REQUIRE(xf.build(keys));
+        for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
+    }
+}
+
+TEST_CASE("xor_filter: FP rate within statistical bounds", "[membership][xor]") {
+    auto keys = make_keys(1000);
+    auto unknowns = make_unknowns(100000);
+
+    xor_filter<16> xf;
+    REQUIRE(xf.build(keys));
+
+    size_t fps = 0;
+    for (const auto& uk : unknowns) { if (xf.verify(uk)) ++fps; }
+
+    double fp_rate = static_cast<double>(fps) / unknowns.size();
+    double expected = 1.0 / 65536.0;
+    double stddev = std::sqrt(expected * (1.0 - expected) / static_cast<double>(unknowns.size()));
+    INFO("FP rate: " << fp_rate << ", expected: " << expected << " +/- " << (3 * stddev));
+    REQUIRE(fp_rate < expected + 3 * stddev);
+}
+
+TEST_CASE("xor_filter: serialization round-trip", "[membership][xor]") {
+    auto keys = make_keys(500);
+    xor_filter<16> original;
+    REQUIRE(original.build(keys));
+
+    auto bytes = original.serialize();
+    auto restored = xor_filter<16>::deserialize(bytes);
+    REQUIRE(restored.has_value());
+    for (const auto& key : keys) { REQUIRE(restored->verify(key)); }
+}
+
+TEST_CASE("xor_filter: edge cases", "[membership][xor]") {
+    SECTION("Small key set (3 keys)") {
+        std::vector<std::string> keys = {"alpha", "beta", "gamma"};
+        xor_filter<8> xf;
+        REQUIRE(xf.build(keys));
+        for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
+    }
+
+    SECTION("Very long keys") {
+        std::vector<std::string> keys;
+        for (int i = 0; i < 20; ++i) keys.push_back(std::string(1000, 'a' + i));
+        xor_filter<16> xf;
+        REQUIRE(xf.build(keys));
+        for (const auto& key : keys) { REQUIRE(xf.verify(key)); }
+    }
+}
