@@ -184,6 +184,46 @@ TEST_CASE("packed_fingerprint_array: edge cases", "[membership][packed]") {
     }
 }
 
+TEST_CASE("packed_fingerprint_array: non-power-of-2 widths", "[membership][packed]") {
+    auto keys = make_keys(500);
+    auto fix = recsplit_fixture::create(keys);
+
+    SECTION("10-bit") {
+        packed_fingerprint_array<10> pfa;
+        pfa.build(keys, fix.slot_fn, keys.size());
+        for (const auto& key : keys) {
+            auto slot = fix.slot_fn(key);
+            REQUIRE(slot.has_value());
+            REQUIRE(pfa.verify(key, *slot));
+        }
+        REQUIRE(pfa.bits_per_key(keys.size()) == 10.0);
+    }
+
+    SECTION("12-bit") {
+        packed_fingerprint_array<12> pfa;
+        pfa.build(keys, fix.slot_fn, keys.size());
+        for (const auto& key : keys) {
+            auto slot = fix.slot_fn(key);
+            REQUIRE(slot.has_value());
+            REQUIRE(pfa.verify(key, *slot));
+        }
+        REQUIRE(pfa.bits_per_key(keys.size()) == 12.0);
+    }
+
+    SECTION("10-bit serialization round-trip") {
+        packed_fingerprint_array<10> original;
+        original.build(keys, fix.slot_fn, keys.size());
+        auto bytes = original.serialize();
+        auto restored = packed_fingerprint_array<10>::deserialize(bytes);
+        REQUIRE(restored.has_value());
+        for (const auto& key : keys) {
+            auto slot = fix.slot_fn(key);
+            REQUIRE(slot.has_value());
+            REQUIRE(restored->verify(key, *slot));
+        }
+    }
+}
+
 // ===== XOR FILTER TESTS =====
 
 TEST_CASE("xor_filter: all widths verify known keys", "[membership][xor]") {

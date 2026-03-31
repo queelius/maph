@@ -55,7 +55,7 @@ inline uint64_t membership_fingerprint(std::string_view key) noexcept {
  * @tparam FingerprintBits Width of each fingerprint (8, 16, or 32)
  */
 template<unsigned FingerprintBits>
-    requires (FingerprintBits == 8 || FingerprintBits == 16 || FingerprintBits == 32)
+    requires (FingerprintBits >= 1 && FingerprintBits <= 32)
 class packed_fingerprint_array {
     static constexpr uint64_t fp_mask = (1ULL << FingerprintBits) - 1;
 
