@@ -250,6 +250,25 @@ target_include_directories(test_v3_phf_concept
 
 target_compile_features(test_v3_phf_concept PRIVATE cxx_std_${V3_CXX_STANDARD})
 
+# PHOBIC algorithm tests
+add_executable(test_v3_phobic
+    test_phobic.cpp
+)
+
+target_link_libraries(test_v3_phobic
+    PRIVATE
+    maph
+    Catch2::Catch2WithMain
+    pthread
+)
+
+target_include_directories(test_v3_phobic
+    PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_compile_features(test_v3_phobic PRIVATE cxx_std_${V3_CXX_STANDARD})
+
 # Comprehensive test suite (all tests in one executable)
 add_executable(test_v3_comprehensive
     test_core.cpp
@@ -288,6 +307,7 @@ if(ENABLE_COVERAGE)
         test_v3_perfect_hash
         test_v3_membership
         test_v3_phf_concept
+        test_v3_phobic
         test_v3_comprehensive
     )
 
@@ -411,6 +431,11 @@ if(EXISTS ${catch2_SOURCE_DIR}/extras/Catch.cmake)
         PROPERTIES TIMEOUT 60
     )
 
+    catch_discover_tests(test_v3_phobic
+        TEST_PREFIX "v3_phobic:"
+        PROPERTIES TIMEOUT 300
+    )
+
     catch_discover_tests(test_v3_comprehensive
         TEST_PREFIX "v3_comprehensive:"
         PROPERTIES TIMEOUT 900  # Comprehensive tests take the longest
@@ -427,9 +452,10 @@ else()
     add_test(NAME v3_comprehensive COMMAND test_v3_comprehensive)
     add_test(NAME v3_membership COMMAND test_v3_membership)
     add_test(NAME v3_phf_concept COMMAND test_v3_phf_concept)
+    add_test(NAME v3_phobic COMMAND test_v3_phobic)
 
     # Set timeouts
-    set_tests_properties(v3_core v3_hashers v3_storage v3_table v3_perfect_hash v3_membership v3_phf_concept PROPERTIES TIMEOUT 300)
+    set_tests_properties(v3_core v3_hashers v3_storage v3_table v3_perfect_hash v3_membership v3_phf_concept v3_phobic PROPERTIES TIMEOUT 300)
     set_tests_properties(v3_integration v3_properties PROPERTIES TIMEOUT 600)
     set_tests_properties(v3_comprehensive PROPERTIES TIMEOUT 900)
 endif()
