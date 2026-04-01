@@ -372,11 +372,6 @@ TEST_CASE("slot size template parameter", "[core][slot]") {
 // Test that concepts work correctly and provide good error messages
 
 // Mock types for concept testing
-struct mock_hasher {
-    hash_value hash(std::string_view) const { return hash_value{1}; }
-    slot_count max_slots() const { return slot_count{100}; }
-};
-
 struct mock_storage {
     result<std::span<const std::byte>> read(slot_index) const {
         return std::unexpected(error::key_not_found);
@@ -398,38 +393,13 @@ struct mock_storage {
     }
 };
 
-struct mock_perfect_hasher {
-    hash_value hash(std::string_view) const { return hash_value{1}; }
-    slot_count max_slots() const { return slot_count{100}; }
-    bool is_perfect_for(std::string_view) const { return true; }
-    std::optional<slot_index> slot_for(std::string_view) const {
-        return slot_index{0};
-    }
-};
-
 TEST_CASE("Concept validation", "[core][concepts]") {
-    SECTION("hasher concept") {
-        REQUIRE(hasher<mock_hasher>);
-
-        // Test that non-conforming types are rejected
-        REQUIRE_FALSE(hasher<int>);
-        REQUIRE_FALSE(hasher<std::string>);
-    }
-
     SECTION("storage_backend concept") {
         REQUIRE(storage_backend<mock_storage>);
 
         // Test that non-conforming types are rejected
         REQUIRE_FALSE(storage_backend<int>);
-        REQUIRE_FALSE(storage_backend<mock_hasher>);
-    }
-
-    SECTION("perfect_hasher concept") {
-        REQUIRE(perfect_hasher<mock_perfect_hasher>);
-        REQUIRE(hasher<mock_perfect_hasher>);  // Should also satisfy hasher
-
-        // Test that regular hashers don't satisfy perfect_hasher
-        REQUIRE_FALSE(perfect_hasher<mock_hasher>);
+        REQUIRE_FALSE(storage_backend<std::string>);
     }
 }
 

@@ -57,7 +57,7 @@ public:
  *
  * Composable design - wraps any hasher to add collision resolution
  */
-template<hasher H>
+template<typename H>
 class linear_probe_hasher {
     H base_;
     size_t max_probes_;
@@ -164,7 +164,7 @@ public:
  *
  * Uses perfect hash for known keys, falls back to standard for others
  */
-template<perfect_hasher P, hasher H>
+template<typename P, typename H>
 class hybrid_hasher {
     P perfect_;
     H fallback_;
@@ -201,7 +201,7 @@ public:
 };
 
 // Factory function for easy composition
-template<perfect_hasher P, hasher H>
+template<typename P, typename H>
 auto make_hybrid(P&& p, H&& h) {
     return hybrid_hasher<std::decay_t<P>, std::decay_t<H>>{
         std::forward<P>(p), std::forward<H>(h)

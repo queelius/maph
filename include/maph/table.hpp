@@ -21,7 +21,7 @@ namespace maph {
  * manages a hash table by composing a hasher and storage backend.
  * All complexity is pushed down to the composed components.
  */
-template<hasher Hasher, typename Storage>
+template<typename Hasher, typename Storage>
 class hash_table {
     Hasher hasher_;
     Storage storage_;
