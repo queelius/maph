@@ -6,6 +6,7 @@
 #pragma once
 
 #include "core.hpp"
+#include "phf_concept.hpp"
 #include <array>
 #include <vector>
 #include <memory>
@@ -111,7 +112,9 @@ public:
  * @class minimal_perfect_hasher
  * @brief Minimal perfect hash function with guaranteed O(1) lookups
  *
- * Clean interface for perfect hashing without implementation details leaking
+ * Satisfies perfect_hash_function concept. Also provides hash()/max_slots()
+ * compatibility methods so it can be used directly with hash_table<>.
+ *
  * This is a simplified implementation for demonstration purposes.
  */
 class minimal_perfect_hasher {
@@ -124,18 +127,20 @@ public:
             return *this;
         }
 
+        builder& add_all(const std::vector<std::string>& keys) {
+            for (const auto& k : keys) keys_.push_back(k);
+            return *this;
+        }
+
         result<minimal_perfect_hasher> build();
     };
 
 private:
     struct impl {
         std::unordered_map<std::string, slot_index> key_to_slot_;
-        std::vector<hash_value> slot_hashes_;
         slot_count total_slots_;
 
-        impl(size_t num_slots) : total_slots_{num_slots} {
-            slot_hashes_.resize(num_slots, hash_value{0});
-        }
+        impl(size_t num_slots) : total_slots_{num_slots} {}
     };
 
     std::unique_ptr<impl> pimpl_;
@@ -148,10 +153,21 @@ public:
     minimal_perfect_hasher(minimal_perfect_hasher&&) = default;
     minimal_perfect_hasher& operator=(minimal_perfect_hasher&&) = default;
 
-    [[nodiscard]] hash_value hash(std::string_view key) const noexcept;
-    [[nodiscard]] slot_count max_slots() const noexcept;
-    [[nodiscard]] bool is_perfect_for(std::string_view key) const noexcept;
-    [[nodiscard]] std::optional<slot_index> slot_for(std::string_view key) const noexcept;
+    // --- perfect_hash_function concept interface ---
+    [[nodiscard]] slot_index slot_for(std::string_view key) const noexcept;
+    [[nodiscard]] size_t num_keys() const noexcept;
+    [[nodiscard]] size_t range_size() const noexcept;
+    [[nodiscard]] double bits_per_key() const noexcept;
+    [[nodiscard]] size_t memory_bytes() const noexcept;
+
+    // --- table-layer compatibility (hash_table needs hash() + max_slots()) ---
+    // Offset by 1 so hash is never 0 (slot layer treats hash 0 as empty)
+    [[nodiscard]] hash_value hash(std::string_view key) const noexcept {
+        return hash_value{slot_for(key).value + 1};
+    }
+    [[nodiscard]] slot_count max_slots() const noexcept {
+        return slot_count{range_size()};
+    }
 
     // Serialization with clear ownership
     [[nodiscard]] std::vector<std::byte> serialize() const;
@@ -160,9 +176,14 @@ public:
 
 /**
  * @class hybrid_hasher
- * @brief Combines perfect and standard hashing elegantly
+ * @brief Wraps a perfect hash function for use with hash_table
  *
- * Uses perfect hash for known keys, falls back to standard for others
+ * Delegates to the PHF's slot_for() for all keys. The fallback hasher
+ * is kept for keys outside the PHF's build set (the PHF returns an
+ * arbitrary slot for those, so collisions are handled by the table layer).
+ *
+ * Provides hash()/max_slots() so it satisfies the hash_table Hasher
+ * requirements.
  */
 template<typename P, typename H>
 class hybrid_hasher {
@@ -174,29 +195,21 @@ public:
         : perfect_(std::move(perfect)), fallback_(std::move(fallback)) {}
 
     [[nodiscard]] hash_value hash(std::string_view key) const noexcept {
-        if (perfect_.is_perfect_for(key)) {
-            return perfect_.hash(key);
-        }
-        return fallback_.hash(key);
+        return hash_value{perfect_.slot_for(key).value};
     }
 
     [[nodiscard]] slot_count max_slots() const noexcept {
-        return perfect_.max_slots();
+        return slot_count{perfect_.range_size()};
     }
 
     [[nodiscard]] auto resolve(std::string_view key) const noexcept {
         struct resolution {
-            hash_value hash;
+            hash_value hash_val;
             slot_index index;
-            bool is_perfect;
         };
 
-        if (auto slot = perfect_.slot_for(key)) {
-            return resolution{perfect_.hash(key), *slot, true};
-        }
-
-        auto h = fallback_.hash(key);
-        return resolution{h, slot_index{h % max_slots().value}, false};
+        auto idx = perfect_.slot_for(key);
+        return resolution{hash_value{idx.value}, idx};
     }
 };
 
@@ -219,79 +232,70 @@ inline result<minimal_perfect_hasher> minimal_perfect_hasher::builder::build() {
     std::sort(keys_.begin(), keys_.end());
     keys_.erase(std::unique(keys_.begin(), keys_.end()), keys_.end());
 
-    auto impl = std::make_unique<minimal_perfect_hasher::impl>(keys_.size());
+    auto p = std::make_unique<minimal_perfect_hasher::impl>(keys_.size());
 
-    // Simple FNV-1a hash for demonstration
-    auto compute_hash = [](std::string_view key) -> hash_value {
-        constexpr uint64_t fnv_offset_basis = 14695981039346656037ULL;
-        constexpr uint64_t fnv_prime = 1099511628211ULL;
-
-        uint64_t h = fnv_offset_basis;
-        for (unsigned char c : key) {
-            h ^= c;
-            h *= fnv_prime;
-        }
-        return hash_value{h ? h : 1};
-    };
-
-    // Assign slots to keys
+    // Assign consecutive slots to keys
     for (size_t i = 0; i < keys_.size(); ++i) {
-        impl->key_to_slot_[keys_[i]] = slot_index{i};
-        impl->slot_hashes_[i] = compute_hash(keys_[i]);
+        p->key_to_slot_[keys_[i]] = slot_index{i};
     }
 
-    return minimal_perfect_hasher{std::move(impl)};
+    return minimal_perfect_hasher{std::move(p)};
 }
 
-inline hash_value minimal_perfect_hasher::hash(std::string_view key) const noexcept {
-    if (auto it = pimpl_->key_to_slot_.find(std::string(key));
-        it != pimpl_->key_to_slot_.end()) {
-        return pimpl_->slot_hashes_[it->second.value];
-    }
-    // For unknown keys, return a hash that maps outside the perfect range
-    return hash_value{pimpl_->total_slots_.value + 1};
-}
-
-inline slot_count minimal_perfect_hasher::max_slots() const noexcept {
-    return pimpl_->total_slots_;
-}
-
-inline bool minimal_perfect_hasher::is_perfect_for(std::string_view key) const noexcept {
-    return pimpl_->key_to_slot_.find(std::string(key)) != pimpl_->key_to_slot_.end();
-}
-
-inline std::optional<slot_index> minimal_perfect_hasher::slot_for(std::string_view key) const noexcept {
+inline slot_index minimal_perfect_hasher::slot_for(std::string_view key) const noexcept {
     if (auto it = pimpl_->key_to_slot_.find(std::string(key));
         it != pimpl_->key_to_slot_.end()) {
         return it->second;
     }
-    return std::nullopt;
+    // Unknown key: return 0 (arbitrary valid index per PHF contract)
+    return slot_index{0};
+}
+
+inline size_t minimal_perfect_hasher::num_keys() const noexcept {
+    return pimpl_->key_to_slot_.size();
+}
+
+inline size_t minimal_perfect_hasher::range_size() const noexcept {
+    return pimpl_->total_slots_.value;
+}
+
+inline double minimal_perfect_hasher::bits_per_key() const noexcept {
+    if (pimpl_->key_to_slot_.empty()) return 0.0;
+    return static_cast<double>(memory_bytes() * 8) / pimpl_->key_to_slot_.size();
+}
+
+inline size_t minimal_perfect_hasher::memory_bytes() const noexcept {
+    // Approximate: each entry has a string key + slot_index in the unordered_map
+    size_t bytes = sizeof(impl);
+    for (const auto& [key, _] : pimpl_->key_to_slot_) {
+        bytes += key.size() + sizeof(slot_index) + 64; // overhead per bucket
+    }
+    return bytes;
 }
 
 inline std::vector<std::byte> minimal_perfect_hasher::serialize() const {
-    // Simplified serialization - in production would use a proper format
-    std::vector<std::byte> result;
+    std::vector<std::byte> buf;
     // Serialize slot count
     auto count_bytes = reinterpret_cast<const std::byte*>(&pimpl_->total_slots_.value);
-    result.insert(result.end(), count_bytes, count_bytes + sizeof(pimpl_->total_slots_.value));
+    buf.insert(buf.end(), count_bytes, count_bytes + sizeof(pimpl_->total_slots_.value));
 
     // Serialize key mappings
     for (const auto& [key, slot] : pimpl_->key_to_slot_) {
         // Key length
         size_t len = key.size();
         auto len_bytes = reinterpret_cast<const std::byte*>(&len);
-        result.insert(result.end(), len_bytes, len_bytes + sizeof(len));
+        buf.insert(buf.end(), len_bytes, len_bytes + sizeof(len));
 
         // Key data
         auto key_bytes = reinterpret_cast<const std::byte*>(key.data());
-        result.insert(result.end(), key_bytes, key_bytes + len);
+        buf.insert(buf.end(), key_bytes, key_bytes + len);
 
         // Slot index
         auto slot_bytes = reinterpret_cast<const std::byte*>(&slot.value);
-        result.insert(result.end(), slot_bytes, slot_bytes + sizeof(slot.value));
+        buf.insert(buf.end(), slot_bytes, slot_bytes + sizeof(slot.value));
     }
 
-    return result;
+    return buf;
 }
 
 inline result<minimal_perfect_hasher> minimal_perfect_hasher::deserialize(std::span<const std::byte> data) {
@@ -336,25 +340,6 @@ inline result<minimal_perfect_hasher> minimal_perfect_hasher::deserialize(std::s
         }
 
         p->key_to_slot_[std::move(key)] = slot;
-    }
-
-    // Recompute slot hashes
-    auto compute_hash = [](std::string_view key) -> hash_value {
-        constexpr uint64_t fnv_offset_basis = 14695981039346656037ULL;
-        constexpr uint64_t fnv_prime = 1099511628211ULL;
-        uint64_t h = fnv_offset_basis;
-        for (unsigned char c : key) {
-            h ^= c;
-            h *= fnv_prime;
-        }
-        return hash_value{h ? h : 1};
-    };
-
-    p->slot_hashes_.resize(total_slots, hash_value{0});
-    for (const auto& [key, slot] : p->key_to_slot_) {
-        if (slot.value < total_slots) {
-            p->slot_hashes_[slot.value] = compute_hash(key);
-        }
     }
 
     return minimal_perfect_hasher{std::move(p)};

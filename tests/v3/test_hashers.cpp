@@ -14,6 +14,7 @@
 #include <catch2/benchmark/catch_benchmark.hpp>
 
 #include <maph/hashers.hpp>
+#include <maph/phf_concept.hpp>
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
@@ -301,8 +302,6 @@ TEST_CASE("minimal_perfect_hasher builder", "[hashers][perfect][builder]") {
                .add("key2")
                .add("key3");
 
-        // Note: The actual implementation might not be complete
-        // These tests verify the interface works as expected
         REQUIRE_NOTHROW(builder.add("key4"));
     }
 
@@ -313,15 +312,65 @@ TEST_CASE("minimal_perfect_hasher builder", "[hashers][perfect][builder]") {
                .add("duplicate")  // Should handle duplicates gracefully
                .add("unique");
 
-        REQUIRE_NOTHROW(builder.add("another"));
+        auto result = builder.build();
+        REQUIRE(result.has_value());
+        // Duplicates are deduplicated
+        REQUIRE(result->num_keys() == 2);
     }
 
     SECTION("Empty builder") {
         minimal_perfect_hasher::builder builder;
 
-        // Building with no keys should be handled
-        // Implementation may return an error or empty hasher
-        REQUIRE_NOTHROW(builder.build());
+        // Building with no keys should return an error
+        auto result = builder.build();
+        REQUIRE_FALSE(result.has_value());
+    }
+
+    SECTION("add_all convenience") {
+        std::vector<std::string> keys = {"x", "y", "z"};
+        auto result = minimal_perfect_hasher::builder{}
+            .add_all(keys)
+            .build();
+        REQUIRE(result.has_value());
+        REQUIRE(result->num_keys() == 3);
+    }
+}
+
+TEST_CASE("minimal_perfect_hasher satisfies perfect_hash_function", "[hashers][perfect][phf]") {
+    auto result = minimal_perfect_hasher::builder{}
+        .add("alpha").add("beta").add("gamma")
+        .build();
+    REQUIRE(result.has_value());
+    auto& phf = *result;
+
+    SECTION("slot_for returns distinct slots for build-set keys") {
+        std::unordered_set<uint64_t> slots;
+        for (auto key : {"alpha", "beta", "gamma"}) {
+            auto idx = phf.slot_for(key);
+            REQUIRE(idx.value < phf.range_size());
+            slots.insert(idx.value);
+        }
+        // All slots unique (perfect)
+        REQUIRE(slots.size() == 3);
+    }
+
+    SECTION("slot_for returns a valid index for unknown keys") {
+        auto idx = phf.slot_for("unknown_key");
+        REQUIRE(idx.value < phf.range_size());
+    }
+
+    SECTION("num_keys and range_size") {
+        REQUIRE(phf.num_keys() == 3);
+        REQUIRE(phf.range_size() == 3); // minimal
+    }
+
+    SECTION("bits_per_key and memory_bytes") {
+        REQUIRE(phf.bits_per_key() > 0.0);
+        REQUIRE(phf.memory_bytes() > 0);
+    }
+
+    SECTION("static concept check") {
+        STATIC_REQUIRE(perfect_hash_function<minimal_perfect_hasher>);
     }
 }
 
@@ -532,27 +581,34 @@ TEST_CASE("Hash collision analysis", "[hashers][stress]") {
 }
 
 // ===== INTEGRATION TESTS WITH CONCEPTS =====
-// Test that hashers work correctly with the concept system
+// Test that hashers provide the interface hash_table needs
 
-template<hasher H>
-void test_hasher_concept(H&& h, std::string_view test_key) {
-    // This function should compile for any type satisfying the hasher concept
+template<typename H>
+void test_table_hasher_interface(H&& h, std::string_view test_key) {
+    // hash_table requires hash() and max_slots() from its Hasher
     auto hash = h.hash(test_key);
     auto slots = h.max_slots();
 
-    REQUIRE(hash.value != 0);  // FNV-1a specific
     REQUIRE(slots.value > 0);
 }
 
-TEST_CASE("Hasher concept integration", "[hashers][concepts]") {
-    SECTION("FNV-1a satisfies hasher concept") {
+TEST_CASE("Hasher table-layer interface", "[hashers][concepts]") {
+    SECTION("FNV-1a provides hash() and max_slots()") {
         fnv1a_hasher hasher{slot_count{100}};
-        REQUIRE_NOTHROW(test_hasher_concept(hasher, "concept_test"));
+        REQUIRE_NOTHROW(test_table_hasher_interface(hasher, "concept_test"));
     }
 
-    SECTION("Linear probe satisfies hasher concept") {
+    SECTION("Linear probe provides hash() and max_slots()") {
         auto probe_hasher = linear_probe_hasher{fnv1a_hasher{slot_count{100}}, 5};
-        REQUIRE_NOTHROW(test_hasher_concept(probe_hasher, "concept_test"));
+        REQUIRE_NOTHROW(test_table_hasher_interface(probe_hasher, "concept_test"));
+    }
+
+    SECTION("minimal_perfect_hasher provides hash() and max_slots()") {
+        auto result = minimal_perfect_hasher::builder{}
+            .add("a").add("b").add("c")
+            .build();
+        REQUIRE(result.has_value());
+        REQUIRE_NOTHROW(test_table_hasher_interface(*result, "a"));
     }
 }
 
@@ -574,17 +630,16 @@ TEST_CASE("minimal_perfect_hasher: serialize/deserialize round-trip", "[hashers]
     auto restored = minimal_perfect_hasher::deserialize(serialized);
     REQUIRE(restored.has_value());
 
-    // Verify all keys round-trip correctly
+    // Verify all keys round-trip correctly (slot_for returns slot_index directly)
     for (auto key : {"alpha", "beta", "gamma"}) {
         auto orig_slot = hasher.slot_for(key);
         auto rest_slot = restored->slot_for(key);
-        REQUIRE(orig_slot.has_value());
-        REQUIRE(rest_slot.has_value());
-        REQUIRE(orig_slot->value == rest_slot->value);
+        REQUIRE(orig_slot.value == rest_slot.value);
     }
 
-    // Unknown keys should still not be found
-    REQUIRE_FALSE(restored->is_perfect_for("delta"));
+    // Verify PHF concept properties round-trip
+    REQUIRE(restored->num_keys() == 3);
+    REQUIRE(restored->range_size() == 3);
 }
 
 TEST_CASE("minimal_perfect_hasher: deserialize empty data", "[hashers][serialization]") {
