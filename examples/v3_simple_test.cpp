@@ -121,19 +121,13 @@ int main() {
             auto& hasher = *hasher_result;
 
             std::cout << "  Perfect hash built for "
-                      << hasher.max_slots().value << " keys\n";
+                      << hasher.num_keys() << " keys\n";
 
-            if (hasher.is_perfect_for("perfect1")) {
-                std::cout << "  'perfect1' is in perfect set\n";
-            }
+            auto slot1 = hasher.slot_for("perfect1");
+            std::cout << "  'perfect1' maps to slot " << slot1.value << "\n";
 
-            if (!hasher.is_perfect_for("unknown")) {
-                std::cout << "  'unknown' is not in perfect set\n";
-            }
-
-            if (auto slot = hasher.slot_for("perfect2")) {
-                std::cout << "  'perfect2' maps to slot " << slot->value << "\n";
-            }
+            auto slot2 = hasher.slot_for("perfect2");
+            std::cout << "  'perfect2' maps to slot " << slot2.value << "\n";
         }
     }
 

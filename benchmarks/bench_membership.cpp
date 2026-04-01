@@ -102,8 +102,7 @@ bench_result run_packed(const std::vector<std::string>& keys,
                   const std::vector<std::string>& unknowns,
                   recsplit8& hasher, size_t qi) {
     auto slot_fn = [&](std::string_view k) -> std::optional<size_t> {
-        auto s = hasher.slot_for(k);
-        return s ? std::optional<size_t>{s->value} : std::nullopt;
+        return std::optional<size_t>{hasher.slot_for(k).value};
     };
     packed_fingerprint_array<FPBits> pfa;
     auto t0 = high_resolution_clock::now();

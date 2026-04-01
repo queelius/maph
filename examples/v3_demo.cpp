@@ -29,9 +29,9 @@ void example_simple_api() {
 
     // Clean error handling with monadic operations
     db.set("user:1", R"({"name": "Alice", "age": 30})")
-      .and_then([&](auto) { return db.set("user:2", R"({"name": "Bob", "age": 25})"); })
-      .and_then([&](auto) { return db.set("user:3", R"({"name": "Carol", "age": 35})"); })
-      .or_else([](error e) {
+      .and_then([&]() { return db.set("user:2", R"({"name": "Bob", "age": 25})"); })
+      .and_then([&]() { return db.set("user:3", R"({"name": "Carol", "age": 35})"); })
+      .or_else([](error e) -> status {
           std::cerr << "Failed to set values\n";
           return status{};
       });
@@ -192,11 +192,11 @@ void example_error_handling() {
     auto db = maph::maph::create_memory();
 
     db.set("key", "value")
-      .and_then([&](auto) { return db.set("key2", "value2"); })
-      .transform([](auto) {
+      .and_then([&]() { return db.set("key2", "value2"); })
+      .transform([]() {
           std::cout << "All operations successful\n";
       })
-      .or_else([](error e) {
+      .or_else([](error e) -> status {
           std::cout << "Operation failed\n";
           return status{};
       });

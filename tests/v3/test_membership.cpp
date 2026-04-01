@@ -56,8 +56,7 @@ struct recsplit_fixture {
     static recsplit_fixture create(const std::vector<std::string>& keys) {
         auto h = recsplit8::builder{}.add_all(keys).build().value();
         auto fn = [h = std::make_shared<recsplit8>(std::move(h))](std::string_view k) -> std::optional<size_t> {
-            auto s = h->slot_for(k);
-            return s ? std::optional<size_t>{s->value} : std::nullopt;
+            return std::optional<size_t>{h->slot_for(k).value};
         };
         auto h2 = recsplit8::builder{}.add_all(keys).build().value();
         return {std::move(h2), std::move(fn)};

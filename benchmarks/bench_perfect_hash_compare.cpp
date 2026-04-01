@@ -91,9 +91,8 @@ BenchmarkResult<HasherType, BuilderType> benchmark_algorithm(
     result.build_time_ms = to_milliseconds(build_end - build_start);
 
     // Get statistics
-    auto stats = hasher.statistics();
-    result.memory_bytes = stats.memory_bytes;
-    result.bits_per_key = stats.bits_per_key;
+    result.memory_bytes = hasher.memory_bytes();
+    result.bits_per_key = hasher.bits_per_key();
 
     // Benchmark query time
     std::mt19937_64 rng{123};
@@ -111,9 +110,9 @@ BenchmarkResult<HasherType, BuilderType> benchmark_algorithm(
         auto slot = hasher.slot_for(key);
         auto q_end = high_resolution_clock::now();
 
-        // Force usage
-        if (!slot.has_value()) {
-            std::cerr << "Key not found!" << std::endl;
+        // Force usage to prevent optimization
+        if (slot.value >= keys.size()) {
+            std::cerr << "Slot out of range!" << std::endl;
         }
 
         query_times.push_back(to_nanoseconds(q_end - q_start));
