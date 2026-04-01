@@ -5,6 +5,7 @@
 
 #include <maph/core.hpp>
 #include <maph/hashers_perfect.hpp>
+#include <maph/phobic.hpp>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -193,6 +194,18 @@ int main(int argc, char** argv) {
 
         print_header();
 
+        // PHOBIC with bucket size 5
+        {
+            auto builder = phobic5::builder{};
+            for (const auto& key : keys) {
+                builder.add(key);
+            }
+            auto result = benchmark_algorithm<phobic5::builder, phobic5>(
+                "PHOBIC-5", std::move(builder), keys, query_iterations
+            );
+            print_result(result);
+        }
+
         // RecSplit with leaf size 8
         {
             auto builder = recsplit8::builder{};
@@ -325,23 +338,24 @@ int main(int argc, char** argv) {
 
     std::cout << "\n=== Summary and Recommendations ===" << std::endl;
     std::cout << std::endl;
-    std::cout << "RecSplit-8:   Best space efficiency (~2 bits/key), fast queries" << std::endl;
+    std::cout << "PHOBIC-5:     ~2.0-2.5 bits/key, fast queries (~15-25ns)" << std::endl;
+    std::cout << "RecSplit-8:   Good space efficiency, fast queries" << std::endl;
     std::cout << "RecSplit-16:  Slightly faster build time, similar query performance" << std::endl;
     std::cout << "CHD-3.0:      More memory, potentially faster lookups" << std::endl;
     std::cout << "CHD-5.0:      Balanced memory/speed trade-off" << std::endl;
     std::cout << "CHD-7.0:      Memory efficient but slower lookups" << std::endl;
     std::cout << "BBHash-2.0:   Good space usage, supports parallel construction" << std::endl;
     std::cout << "BBHash-2.5:   Faster build, slightly more memory" << std::endl;
-    std::cout << "PTHash-98:    Very fast queries (~20-30ns), excellent space efficiency" << std::endl;
+    std::cout << "PTHash-98:    Very fast queries, works for small key sets only" << std::endl;
     std::cout << "FCH-4.0:      Simple algorithm, educational, good all-around performance" << std::endl;
     std::cout << "FCH-6.0:      Less memory, potentially slower build" << std::endl;
     std::cout << std::endl;
     std::cout << "Recommendations:" << std::endl;
-    std::cout << "  - Fastest queries: PTHash-98" << std::endl;
-    std::cout << "  - Best space: RecSplit-8" << std::endl;
+    std::cout << "  - Best space + speed: PHOBIC-5" << std::endl;
+    std::cout << "  - Proven algorithms: RecSplit-8 or CHD-5.0" << std::endl;
     std::cout << "  - Parallel build: BBHash (supports multi-threading)" << std::endl;
     std::cout << "  - Educational: FCH (simple, easy to understand)" << std::endl;
-    std::cout << "  - General purpose: RecSplit-8 or PTHash-98" << std::endl;
+    std::cout << "  - General purpose: PHOBIC-5 or RecSplit-8" << std::endl;
     std::cout << std::endl;
 
     return 0;
