@@ -1247,12 +1247,12 @@ public:
 
             double current_gamma = gamma_;
 
-            for (int attempt = 0; attempt < 50; ++attempt) {
+            for (int attempt = 0; attempt < 100; ++attempt) {
                 uint64_t attempt_seed = seed_ ^ (attempt * 0x9e3779b97f4a7c15ULL);
 
-                // Bump gamma every 10 attempts
-                if (attempt > 0 && attempt % 10 == 0) {
-                    current_gamma += 0.2;
+                // Bump gamma every 5 attempts (more aggressive for large key sets)
+                if (attempt > 0 && attempt % 5 == 0) {
+                    current_gamma += 0.5;
                 }
 
                 bbhash_hasher hasher(keys_.size(), current_gamma, attempt_seed);
