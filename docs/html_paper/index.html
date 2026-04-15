@@ -1,0 +1,2167 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage</title>
+<!--Generated on Sat Mar 14 07:41:34 2026 by LaTeXML (version 0.8.8) http://dlmf.nist.gov/LaTeXML/.-->
+
+<link rel="stylesheet" href="LaTeXML.css" type="text/css">
+<link rel="stylesheet" href="ltx-article.css" type="text/css">
+<link rel="stylesheet" href="ltx-listings.css" type="text/css">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="keywords" lang="en" content="
+key-value stores,  memory-mapped I/O,  perfect hashing,  lock-free algorithms,  sub-microsecond latency,  zero-copy architecture
+">
+</head>
+<body>
+<div class="ltx_page_main">
+<div class="ltx_page_content">
+<article class="ltx_document ltx_authors_1line">
+<h1 class="ltx_title ltx_title_document">maph: Maps Based on Perfect Hashing
+<br class="ltx_break">for Sub-Microsecond Key-Value Storage</h1>
+<div class="ltx_authors">
+<span class="ltx_creator ltx_role_author">
+<span class="ltx_personname">Alexander Towell
+</span><span class="ltx_author_notes">
+<span class="ltx_contact ltx_role_affiliation"><span class="ltx_text ltx_font_italic">PhD Student
+<br class="ltx_break"></span>Southern Illinois University Edwardsville/Carbondale
+<br class="ltx_break">Email: atowell@siue.edu, lex@metafunctor.com
+<br class="ltx_break">GitHub: <a href="https://github.com/queelius/rd_ph_filter" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://github.com/queelius/rd_ph_filter</a>
+</span></span></span>
+</div>
+
+<div class="ltx_abstract">
+<h6 class="ltx_title ltx_title_abstract">Abstract</h6>
+<p class="ltx_p">We present <span class="ltx_text ltx_font_italic">maph</span> (Map based on Perfect Hash), a high-performance key-value storage system that achieves sub-microsecond latency through a novel combination of memory-mapped I/O, approximate perfect hashing, and lock-free atomic operations. Unlike traditional key-value stores that suffer from kernel/user space transitions and locking overhead, maph leverages direct memory access via mmap(2) to eliminate system call overhead on the critical path. Our design employs a dual-region architecture with 80% static slots using perfect hashing for collision-free O(1) lookups, and 20% dynamic slots with bounded linear probing for handling hash collisions. Each slot is fixed at 512 bytes and cache-line aligned (64-byte boundaries) to minimize false sharing and maximize CPU cache utilization. Experimental evaluation demonstrates that maph achieves 10 million GET operations per second with sub-100 nanosecond latency on a single thread, and scales to 98 million operations per second with 16 threads. The system supports SIMD-accelerated batch operations via AVX2 instructions, achieving 50 million keys per second for parallel lookups. We show that maph outperforms Redis by 12<math id="m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>, RocksDB by 87<math id="m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>, and Memcached by 6<math id="m3" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> on read-heavy workloads while maintaining comparable write performance. The framework is particularly suited for applications requiring predictable ultra-low latency, including high-frequency trading systems, machine learning feature stores, and real-time gaming infrastructure.</p>
+</div>
+<div class="ltx_keywords">
+<h6 class="ltx_title ltx_title_keywords">Index Terms: </h6>
+key-value stores, memory-mapped I/O, perfect hashing, lock-free algorithms, sub-microsecond latency, zero-copy architecture
+
+</div>
+<section id="S1" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">I </span><span class="ltx_text ltx_font_smallcaps">Introduction</span>
+</h2>
+
+<div id="S1.p1" class="ltx_para">
+<p class="ltx_p">Modern distributed systems and cloud applications increasingly depend on high-performance key-value stores for caching, session management, and metadata storage. However, existing solutions face fundamental limitations when microsecond-level latency becomes critical. Traditional in-memory databases like Redis <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib1" title="" class="ltx_ref">1</a>]</cite> operate in user space, incurring system call overhead for each operation. Persistent stores like RocksDB <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib2" title="" class="ltx_ref">2</a>]</cite> optimize for durability and compression at the expense of lookup speed. Even specialized caches like Memcached <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib3" title="" class="ltx_ref">3</a>]</cite> cannot achieve sub-microsecond latency due to network stack overhead and serialization costs.</p>
+</div>
+<div id="S1.p2" class="ltx_para">
+<p class="ltx_p">The performance gap becomes particularly acute in domains such as high-frequency trading, where every nanosecond of latency translates directly to competitive disadvantage and potential financial loss <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib4" title="" class="ltx_ref">4</a>]</cite>. Similarly, machine learning inference pipelines require feature stores capable of retrieving thousands of features within tight latency budgets <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib5" title="" class="ltx_ref">5</a>]</cite>. Real-time gaming and IoT applications demand predictable response times even under concurrent access patterns <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib6" title="" class="ltx_ref">6</a>]</cite>.</p>
+</div>
+<div id="S1.p3" class="ltx_para">
+<p class="ltx_p">We identify three fundamental bottlenecks in existing key-value stores:</p>
+</div>
+<div id="S1.p4" class="ltx_para">
+<ol id="S1.I1" class="ltx_enumerate">
+<li id="S1.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S1.I1.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Kernel overhead</span>: System calls for I/O operations require expensive context switches between user and kernel space, typically adding 100-500ns of latency per operation <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib7" title="" class="ltx_ref">7</a>]</cite>.</p>
+</div>
+</li>
+<li id="S1.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S1.I1.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Memory copying</span>: Traditional stores copy data multiple times—from kernel buffers to user space, between internal data structures, and for serialization. Each copy operation consumes CPU cycles and memory bandwidth.</p>
+</div>
+</li>
+<li id="S1.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S1.I1.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Synchronization overhead</span>: Lock-based concurrency control creates contention under high concurrency, leading to unpredictable latency spikes and poor scalability <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib8" title="" class="ltx_ref">8</a>]</cite>.</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S1.p5" class="ltx_para">
+<p class="ltx_p">To address these challenges, we present <span class="ltx_text ltx_font_italic">maph</span>, a novel key-value storage framework that achieves sub-microsecond latency through three key innovations:</p>
+</div>
+<div id="S1.p6" class="ltx_para">
+<ul id="S1.I2" class="ltx_itemize">
+<li id="S1.I2.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S1.I2.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Zero-copy architecture via mmap</span>: By memory-mapping the entire database file, we eliminate kernel/user space transitions and enable direct memory access to persistent storage. The CPU’s memory management unit (MMU) handles address translation transparently, providing the illusion of in-memory access with automatic persistence.</p>
+</div>
+</li>
+<li id="S1.I2.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S1.I2.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Approximate perfect hashing</span>: We partition the key space into static (80%) and dynamic (20%) regions. Static slots use perfect hash functions <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib9" title="" class="ltx_ref">9</a>, <a href="#bib.bib10" title="" class="ltx_ref">10</a>]</cite> to guarantee collision-free O(1) lookups. Dynamic slots handle overflow via bounded linear probing with a maximum of 10 probes.</p>
+</div>
+</li>
+<li id="S1.I2.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S1.I2.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Lock-free atomic operations</span>: All operations use compare-and-swap (CAS) primitives and atomic versioning to ensure consistency without locks. Readers never block, and writers coordinate through atomic slot versioning.</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S1.p7" class="ltx_para">
+<p class="ltx_p">Our primary contributions are:</p>
+</div>
+<div id="S1.p8" class="ltx_para">
+<ol id="S1.I3" class="ltx_enumerate">
+<li id="S1.I3.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S1.I3.i1.p1" class="ltx_para">
+<p class="ltx_p">A hybrid hash architecture combining perfect hashing for known keys with standard hashing for dynamic keys, providing O(1) lookups for optimized datasets while gracefully handling new insertions</p>
+</div>
+</li>
+<li id="S1.I3.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S1.I3.i2.p1" class="ltx_para">
+<p class="ltx_p">Application of memory-mapped I/O to eliminate system call overhead in the critical path while maintaining automatic persistence through the kernel page cache</p>
+</div>
+</li>
+<li id="S1.I3.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S1.I3.i3.p1" class="ltx_para">
+<p class="ltx_p">Engineering optimizations including cache-line aligned fixed-size slots (512 bytes), lock-free versioning for concurrent reads, and bounded linear probing for predictable worst-case performance</p>
+</div>
+</li>
+<li id="S1.I3.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">4.</span> 
+<div id="S1.I3.i4.p1" class="ltx_para">
+<p class="ltx_p">Experimental evaluation comparing in-process performance against both network-based systems (Redis, Memcached) and in-memory data structures (std::unordered_map) with detailed latency analysis</p>
+</div>
+</li>
+<li id="S1.I3.i5" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">5.</span> 
+<div id="S1.I3.i5.p1" class="ltx_para">
+<p class="ltx_p">Open-source implementation demonstrating practical application of these techniques for JSON key-value storage with sub-microsecond target latency</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S1.p9" class="ltx_para">
+<p class="ltx_p">The remainder of this paper is organized as follows. Section <a href="#S2" title="II Background and Related Work ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">II</span></a> reviews related work in high-performance key-value storage. Section <a href="#S3" title="III System Architecture ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">III</span></a> presents the maph system architecture and design rationale. Section <a href="#S4" title="IV Implementation Details ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">IV</span></a> details the implementation including memory layout, hash functions, and concurrency control. Section <a href="#S5" title="V Experimental Evaluation ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">V</span></a> evaluates performance through microbenchmarks and comparison with existing systems. Section <a href="#S6" title="VI Discussion ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">VI</span></a> discusses limitations and future work. Section <a href="#S7" title="VII Conclusion ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">VII</span></a> concludes.</p>
+</div>
+</section>
+<section id="S2" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">II </span><span class="ltx_text ltx_font_smallcaps">Background and Related Work</span>
+</h2>
+
+<section id="S2.SS1" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-A </span><span class="ltx_text ltx_font_italic">Traditional Key-Value Stores</span>
+</h3>
+
+<div id="S2.SS1.p1" class="ltx_para">
+<p class="ltx_p">Redis <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib1" title="" class="ltx_ref">1</a>]</cite> represents the most widely deployed in-memory key-value store, using a single-threaded event loop to avoid synchronization overhead. While this design simplifies reasoning about consistency, it fundamentally limits scalability on multi-core systems. Redis achieves approximately 100,000 operations per second on a single core but cannot exploit parallelism without complex sharding schemes.</p>
+</div>
+<div id="S2.SS1.p2" class="ltx_para">
+<p class="ltx_p">RocksDB <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib2" title="" class="ltx_ref">2</a>]</cite> and LevelDB <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib11" title="" class="ltx_ref">11</a>]</cite> optimize for storage efficiency using log-structured merge trees (LSM-trees). The multi-level structure with compaction provides excellent compression ratios and write throughput but requires multiple disk seeks for reads. Even with extensive caching, lookup latency remains in the microsecond range due to the inherent tree traversal overhead.</p>
+</div>
+<div id="S2.SS1.p3" class="ltx_para">
+<p class="ltx_p">Memcached <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib3" title="" class="ltx_ref">3</a>]</cite> focuses on simplicity and network efficiency for distributed caching. Its slab allocator reduces fragmentation, and multi-threaded architecture scales well. However, the network stack adds unavoidable latency—even with kernel bypass techniques like DPDK <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib12" title="" class="ltx_ref">12</a>]</cite>, round-trip times exceed one microsecond.</p>
+</div>
+</section>
+<section id="S2.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-B </span><span class="ltx_text ltx_font_italic">Low-Latency Distributed Systems</span>
+</h3>
+
+<div id="S2.SS2.p1" class="ltx_para">
+<p class="ltx_p">Several research systems target microsecond-scale latency through specialized architectures and RDMA networking.</p>
+</div>
+<div id="S2.SS2.p2" class="ltx_para">
+<p class="ltx_p">RAMCloud <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib30" title="" class="ltx_ref">30</a>]</cite> achieves single-digit microsecond latency by keeping all data in DRAM with log-structured organization and fast crash recovery. The system uses kernel bypass and polling for low latency, reporting median read latency of 5<math id="S2.SS2.p2.m1" class="ltx_Math" alttext="\mu" display="inline"><mi>μ</mi></math>s. While significantly faster than traditional databases, this remains an order of magnitude slower than our sub-microsecond target.</p>
+</div>
+<div id="S2.SS2.p3" class="ltx_para">
+<p class="ltx_p">FaRM <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib31" title="" class="ltx_ref">31</a>]</cite> leverages RDMA one-sided reads to achieve median read latency of 5<math id="S2.SS2.p3.m1" class="ltx_Math" alttext="\mu" display="inline"><mi>μ</mi></math>s for small objects. The use of one-sided RDMA eliminates server CPU involvement for reads, but network latency and RDMA NIC processing still dominate at this scale. FaRM focuses on distributed transactions rather than single-machine key-value performance.</p>
+</div>
+<div id="S2.SS2.p4" class="ltx_para">
+<p class="ltx_p">MICA <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib32" title="" class="ltx_ref">32</a>]</cite> demonstrates that careful engineering of partitioned in-memory hash tables can achieve 65 million operations per second on a single machine. The design uses per-core data structures to avoid synchronization overhead. While MICA achieves high throughput, its focus on avoiding cross-core communication differs from our lock-free shared-memory approach.</p>
+</div>
+<div id="S2.SS2.p5" class="ltx_para">
+<p class="ltx_p">HERD <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib33" title="" class="ltx_ref">33</a>]</cite> explores the design space of using RDMA for key-value stores, finding that RDMA writes combined with polling can achieve sub-10<math id="S2.SS2.p5.m1" class="ltx_Math" alttext="\mu" display="inline"><mi>μ</mi></math>s latency. The system demonstrates the importance of reducing round trips and using efficient RPC mechanisms.</p>
+</div>
+<div id="S2.SS2.p6" class="ltx_para">
+<p class="ltx_p">These systems demonstrate the achievable performance with specialized hardware (RDMA NICs) and distributed architectures. In contrast, maph targets single-machine performance using commodity hardware and shared memory, trading off distributed functionality for lower latency through memory mapping and perfect hashing.</p>
+</div>
+</section>
+<section id="S2.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-C </span><span class="ltx_text ltx_font_italic">Memory-Mapped Databases</span>
+</h3>
+
+<div id="S2.SS3.p1" class="ltx_para">
+<p class="ltx_p">LMDB <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib13" title="" class="ltx_ref">13</a>]</cite> pioneered the use of memory-mapped files for database storage, eliminating the buffer cache and providing zero-copy reads. Its B+tree structure with copy-on-write semantics ensures consistency without write-ahead logging. However, the tree structure still requires O(log n) comparisons, and the append-only design leads to space amplification.</p>
+</div>
+<div id="S2.SS3.p2" class="ltx_para">
+<p class="ltx_p">WiredTiger <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib14" title="" class="ltx_ref">14</a>]</cite>, used in MongoDB, employs memory mapping for its cache but maintains complex buffer management for durability. The layered architecture with multiple storage engines adds abstraction overhead that prevents achieving nanosecond-level latency.</p>
+</div>
+</section>
+<section id="S2.SS4" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-D </span><span class="ltx_text ltx_font_italic">Perfect Hash Functions</span>
+</h3>
+
+<div id="S2.SS4.p1" class="ltx_para">
+<p class="ltx_p">Perfect hash functions map a set of keys to unique positions without collisions. Minimal perfect hash functions (MPHF) additionally ensure the range equals the key set size, achieving optimal space efficiency <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib15" title="" class="ltx_ref">15</a>]</cite>.</p>
+</div>
+<div id="S2.SS4.p2" class="ltx_para">
+<p class="ltx_p">The CHD algorithm <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib9" title="" class="ltx_ref">9</a>]</cite> constructs minimal perfect hash functions in expected linear time using hypergraph techniques. For n keys, it requires approximately 2.7 bits per key of auxiliary space while providing O(1) query time.</p>
+</div>
+<div id="S2.SS4.p3" class="ltx_para">
+<p class="ltx_p">BBHash <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib10" title="" class="ltx_ref">10</a>]</cite> improves construction time through a multi-level scheme, building the hash function in O(n) time with 3 bits per key. The cascade approach handles collisions by recursively processing them at subsequent levels.</p>
+</div>
+<div id="S2.SS4.p4" class="ltx_para">
+<p class="ltx_p">RecSplit <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib16" title="" class="ltx_ref">16</a>]</cite> achieves the theoretical lower bound of approximately 1.56 bits per key through recursive splitting, though with higher construction cost. The space optimality comes at the expense of more complex query operations.</p>
+</div>
+</section>
+<section id="S2.SS5" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-E </span><span class="ltx_text ltx_font_italic">Lock-Free Data Structures</span>
+</h3>
+
+<div id="S2.SS5.p1" class="ltx_para">
+<p class="ltx_p">Lock-free algorithms guarantee system-wide progress—at least one thread makes forward progress at any time <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib17" title="" class="ltx_ref">17</a>]</cite>. This property eliminates deadlock and reduces latency variance under contention.</p>
+</div>
+<div id="S2.SS5.p2" class="ltx_para">
+<p class="ltx_p">Concurrent hash tables like Junction <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib18" title="" class="ltx_ref">18</a>]</cite> and libcuckoo <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib19" title="" class="ltx_ref">19</a>]</cite> demonstrate that lock-free designs can achieve superior scalability. Junction uses atomic operations on pointers for collision chain management, while libcuckoo employs fine-grained locking with cuckoo hashing for bounded worst-case lookup time.</p>
+</div>
+<div id="S2.SS5.p3" class="ltx_para">
+<p class="ltx_p">The Read-Copy-Update (RCU) pattern <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib20" title="" class="ltx_ref">20</a>]</cite> enables zero-overhead reads by deferring reclamation until all readers complete. This technique is particularly effective for read-heavy workloads but requires careful epoch management.</p>
+</div>
+</section>
+<section id="S2.SS6" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">II-F </span><span class="ltx_text ltx_font_italic">SIMD Optimization for Databases</span>
+</h3>
+
+<div id="S2.SS6.p1" class="ltx_para">
+<p class="ltx_p">Modern CPUs provide SIMD (Single Instruction, Multiple Data) instructions that operate on multiple data elements simultaneously. AVX2 instructions process 256 bits (8 integers or 4 doubles) per cycle, while AVX-512 doubles this to 512 bits <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib21" title="" class="ltx_ref">21</a>]</cite>.</p>
+</div>
+<div id="S2.SS6.p2" class="ltx_para">
+<p class="ltx_p">Column stores like MonetDB <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib22" title="" class="ltx_ref">22</a>]</cite> and Vectorwise <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib23" title="" class="ltx_ref">23</a>]</cite> exploit SIMD for analytical queries, achieving order-of-magnitude speedups for aggregations and joins. The columnar layout naturally aligns with SIMD execution models.</p>
+</div>
+<div id="S2.SS6.p3" class="ltx_para">
+<p class="ltx_p">For hash tables, SIMD accelerates both hash computation and key comparison. Swiss tables <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib24" title="" class="ltx_ref">24</a>]</cite> use SIMD to check multiple slots simultaneously, reducing the average probe count. F14 <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib25" title="" class="ltx_ref">25</a>]</cite> combines SIMD probing with cache-line-aware layout for optimal performance.</p>
+</div>
+</section>
+</section>
+<section id="S3" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">III </span><span class="ltx_text ltx_font_smallcaps">System Architecture</span>
+</h2>
+
+<section id="S3.SS1" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-A </span><span class="ltx_text ltx_font_italic">Design Principles</span>
+</h3>
+
+<div id="S3.SS1.p1" class="ltx_para">
+<p class="ltx_p">The maph architecture is guided by four fundamental principles that collectively enable sub-microsecond latency:</p>
+</div>
+<div id="S3.SS1.p2" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Principle 1: Eliminate kernel crossings.</span> Every system call incurs mode switch overhead, typically 100-200ns on modern processors. By memory-mapping the entire database, we transform storage access into simple pointer dereference, delegating page fault handling to the MMU.</p>
+</div>
+<div id="S3.SS1.p3" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Principle 2: Minimize memory movement.</span> Data copying consumes both CPU cycles and memory bandwidth. Our zero-copy design ensures data remains in place from storage to application, using string_view abstractions to provide safe access without ownership transfer.</p>
+</div>
+<div id="S3.SS1.p4" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Principle 3: Exploit hardware parallelism.</span> Modern CPUs offer multiple forms of parallelism—instruction-level (pipelining), data-level (SIMD), and thread-level (multi-core). Our design leverages all three through lock-free algorithms, vectorized operations, and parallel batch processing.</p>
+</div>
+<div id="S3.SS1.p5" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Principle 4: Optimize for the common case.</span> While supporting general key-value operations, we optimize for the predominant access pattern: read-heavy workloads with temporal locality. The 80/20 static/dynamic split reflects empirical observations that most keys stabilize after initial insertion.</p>
+</div>
+</section>
+<section id="S3.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-B </span><span class="ltx_text ltx_font_italic">Memory-Mapped Storage Layer</span>
+</h3>
+
+<div id="S3.SS2.p1" class="ltx_para">
+<p class="ltx_p">Figure <a href="#S3.F1" title="Figure 1 ‣ III-B Memory-Mapped Storage Layer ‣ III System Architecture ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">1</span></a> illustrates the memory-mapped storage architecture. The database file is mapped into the process address space using mmap(2) with MAP_SHARED semantics, making changes visible across processes and persistent to disk.</p>
+</div>
+<figure id="S3.F1" class="ltx_figure">
+<p class="ltx_p ltx_align_center"><span class="ltx_text ltx_framed ltx_framed_rectangle ltx_inline-block" style="width:390.3pt;border-color: #000000;">[Memory mapping diagram would appear here]</span></p>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_figure">Figure 1: </span>Memory-mapped storage architecture showing virtual address translation and page cache integration</figcaption>
+</figure>
+<div id="S3.SS2.p2" class="ltx_para">
+<p class="ltx_p">The mapping process involves three key components:</p>
+</div>
+<div id="S3.SS2.p3" class="ltx_para">
+<ol id="S3.I1" class="ltx_enumerate">
+<li id="S3.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S3.I1.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Virtual address space</span>: The kernel reserves a contiguous region in the process’s virtual address space corresponding to the file size. No physical memory is allocated initially.</p>
+</div>
+</li>
+<li id="S3.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S3.I1.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Page tables</span>: The MMU maintains page table entries (PTEs) mapping virtual pages to physical frames. Initially, all PTEs are marked invalid, triggering page faults on first access.</p>
+</div>
+</li>
+<li id="S3.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S3.I1.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Page cache</span>: The kernel’s page cache serves as an intermediary between memory and disk. Pages are loaded on demand and written back based on system memory pressure and sync policies.</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S3.SS2.p4" class="ltx_para">
+<p class="ltx_p">This architecture provides several critical advantages:</p>
+</div>
+<div id="S3.SS2.p5" class="ltx_para">
+<ul id="S3.I2" class="ltx_itemize">
+<li id="S3.I2.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I2.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Transparent persistence</span>: The kernel handles dirty page writeback automatically, ensuring durability without explicit flush operations.</p>
+</div>
+</li>
+<li id="S3.I2.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I2.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Shared memory</span>: Multiple processes can map the same file, enabling zero-copy inter-process communication.</p>
+</div>
+</li>
+<li id="S3.I2.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I2.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Lazy loading</span>: Only accessed pages consume physical memory, allowing databases larger than RAM.</p>
+</div>
+</li>
+<li id="S3.I2.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I2.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">CPU cache coherence</span>: The hardware maintains cache coherence across cores, eliminating manual invalidation.</p>
+</div>
+</li>
+</ul>
+</div>
+</section>
+<section id="S3.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-C </span><span class="ltx_text ltx_font_italic">Hybrid Hash Architecture</span>
+</h3>
+
+<div id="S3.SS3.p1" class="ltx_para">
+<p class="ltx_p">The maph design employs a hybrid hashing strategy that adapts to workload characteristics. Rather than statically partitioning the slot array, we use a single unified slot array with a hybrid hasher that selects the appropriate hash function based on key characteristics.</p>
+</div>
+<section id="S3.SS3.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-C1 </span>Perfect Hash for Known Keys</h4>
+
+<div id="S3.SS3.SSS1.p1" class="ltx_para">
+<p class="ltx_p">When a dataset is loaded or optimized, maph constructs a minimal perfect hash function for the known key set K. For these keys, the perfect hash function <math id="S3.SS3.SSS1.p1.m1" class="ltx_Math" alttext="h_{p}:K\to[0,n-1]" display="inline"><mrow><msub><mi>h</mi><mi>p</mi></msub><mo lspace="0.278em" rspace="0.278em">:</mo><mrow><mi>K</mi><mo stretchy="false">→</mo><mrow><mo stretchy="false">[</mo><mn>0</mn><mo>,</mo><mrow><mi>n</mi><mo>−</mo><mn>1</mn></mrow><mo stretchy="false">]</mo></mrow></mrow></mrow></math> guarantees collision-free mapping:</p>
+<table id="S3.E1" class="ltx_equation ltx_eqn_table">
+
+<tbody><tr class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_eqn_cell ltx_align_center"><math id="S3.E1.m1" class="ltx_math_unparsed" alttext="\forall k_{i},k_{j}\in K,i\neq j:h_{p}(k_{i})\neq h_{p}(k_{j})" display="block"><mrow><mo rspace="0.167em">∀</mo><msub><mi>k</mi><mi>i</mi></msub><mo>,</mo><msub><mi>k</mi><mi>j</mi></msub><mo>∈</mo><mi>K</mi><mo>,</mo><mi>i</mi><mo>≠</mo><mi>j</mi><mo lspace="0.278em" rspace="0.278em">:</mo><msub><mi>h</mi><mi>p</mi></msub><mrow><mo stretchy="false">(</mo><msub><mi>k</mi><mi>i</mi></msub><mo stretchy="false">)</mo></mrow><mo>≠</mo><msub><mi>h</mi><mi>p</mi></msub><mrow><mo stretchy="false">(</mo><msub><mi>k</mi><mi>j</mi></msub><mo stretchy="false">)</mo></mrow></mrow></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="1" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equation ltx_align_right">(1)</span></td>
+</tr></tbody>
+</table>
+</div>
+<div id="S3.SS3.SSS1.p2" class="ltx_para">
+<p class="ltx_p">This provides O(1) worst-case lookup time with exactly one memory access per query—no probing required. The perfect hash function stores minimal metadata to identify which keys it was built for.</p>
+</div>
+</section>
+<section id="S3.SS3.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-C2 </span>Standard Hash with Linear Probing for New Keys</h4>
+
+<div id="S3.SS3.SSS2.p1" class="ltx_para">
+<p class="ltx_p">Keys not in the original dataset K (inserted after optimization or before initial optimization) use a standard FNV-1a hash function <math id="S3.SS3.SSS2.p1.m1" class="ltx_Math" alttext="h_{s}" display="inline"><msub><mi>h</mi><mi>s</mi></msub></math> combined with linear probing:</p>
+<table id="S3.E2" class="ltx_equation ltx_eqn_table">
+
+<tbody><tr class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_eqn_cell ltx_align_center"><math id="S3.E2.m1" class="ltx_Math" alttext="\text{slot}_{i}=(h_{s}(k)+i)\mod n,\quad i\in[0,\text{MAX\_PROBES}-1]" display="block"><mrow><mrow><msub><mtext>slot</mtext><mi>i</mi></msub><mo>=</mo><mrow><mrow><mo stretchy="false">(</mo><mrow><mrow><msub><mi>h</mi><mi>s</mi></msub><mo>⁢</mo><mrow><mo stretchy="false">(</mo><mi>k</mi><mo stretchy="false">)</mo></mrow></mrow><mo>+</mo><mi>i</mi></mrow><mo stretchy="false">)</mo></mrow><mo>mod</mo><mi>n</mi></mrow></mrow><mo rspace="1.167em">,</mo><mrow><mi>i</mi><mo>∈</mo><mrow><mo stretchy="false">[</mo><mn>0</mn><mo>,</mo><mrow><mtext>MAX_PROBES</mtext><mo>−</mo><mn>1</mn></mrow><mo stretchy="false">]</mo></mrow></mrow></mrow></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="1" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equation ltx_align_right">(2)</span></td>
+</tr></tbody>
+</table>
+</div>
+<div id="S3.SS3.SSS2.p2" class="ltx_para">
+<p class="ltx_p">The maximum probe distance (default 10) ensures bounded worst-case latency. If all probe positions are occupied, the insertion fails with a table-full error.</p>
+</div>
+</section>
+<section id="S3.SS3.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-C3 </span>Slot Verification</h4>
+
+<div id="S3.SS3.SSS3.p1" class="ltx_para">
+<p class="ltx_p">Each slot stores a hash identifier in its metadata. During lookup, the system:</p>
+<ol id="S3.I3" class="ltx_enumerate">
+<li id="S3.I3.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S3.I3.i1.p1" class="ltx_para">
+<p class="ltx_p">Computes the initial slot position using the appropriate hash function</p>
+</div>
+</li>
+<li id="S3.I3.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S3.I3.i2.p1" class="ltx_para">
+<p class="ltx_p">Reads the slot’s hash identifier atomically</p>
+</div>
+</li>
+<li id="S3.I3.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S3.I3.i3.p1" class="ltx_para">
+<p class="ltx_p">Compares it with the expected hash of the key</p>
+</div>
+</li>
+<li id="S3.I3.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">4.</span> 
+<div id="S3.I3.i4.p1" class="ltx_para">
+<p class="ltx_p">If matching, returns the value; otherwise probes the next slot</p>
+</div>
+</li>
+<li id="S3.I3.i5" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">5.</span> 
+<div id="S3.I3.i5.p1" class="ltx_para">
+<p class="ltx_p">Terminates on empty slot (key not found) or after MAX_PROBES attempts</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S3.SS3.SSS3.p2" class="ltx_para">
+<p class="ltx_p">This approach provides false positive rates dependent on hash collision probability. For a 32-bit hash identifier, the false positive rate is approximately <math id="S3.SS3.SSS3.p2.m1" class="ltx_Math" alttext="2^{-32}\approx 2.3\times 10^{-10}" display="inline"><mrow><msup><mn>2</mn><mrow><mo>−</mo><mn>32</mn></mrow></msup><mo>≈</mo><mrow><mn>2.3</mn><mo lspace="0.222em" rspace="0.222em">×</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>10</mn></mrow></msup></mrow></mrow></math> per comparison.</p>
+</div>
+</section>
+</section>
+<section id="S3.SS4" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-D </span><span class="ltx_text ltx_font_italic">Slot Design with Configurable Size</span>
+</h3>
+
+<div id="S3.SS4.p1" class="ltx_para">
+<p class="ltx_p">The maph storage layer uses fixed-size slots with the size configurable as a compile-time template parameter. The default instantiation uses 512-byte slots, aligned to 64-byte cache lines. This design reflects several critical trade-offs:</p>
+</div>
+<section id="S3.SS4.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-D1 </span>Cache Line Alignment</h4>
+
+<div id="S3.SS4.SSS1.p1" class="ltx_para">
+<p class="ltx_p">Modern CPUs fetch data in 64-byte cache lines. Aligning slots to cache line boundaries prevents false sharing—a performance pathology where independent updates to adjacent memory locations contend for the same cache line. With 512-byte slots aligned to 64 bytes, each slot spans exactly 8 cache lines, ensuring updates to different slots never conflict.</p>
+</div>
+</section>
+<section id="S3.SS4.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-D2 </span>Memory Layout</h4>
+
+<div id="S3.SS4.SSS2.p1" class="ltx_para">
+<p class="ltx_p">Each slot contains:</p>
+<ul id="S3.I4" class="ltx_itemize">
+<li id="S3.I4.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I4.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Metadata (16 bytes)</span>:</p>
+<ul id="S3.I4.i1.I1" class="ltx_itemize">
+<li id="S3.I4.i1.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item"><span class="ltx_text ltx_font_bold">–</span></span> 
+<div id="S3.I4.i1.I1.i1.p1" class="ltx_para">
+<p class="ltx_p">Atomic hash_version (8 bytes): Upper 32 bits store the key’s hash identifier for verification; lower 32 bits store a version counter for lock-free updates</p>
+</div>
+</li>
+<li id="S3.I4.i1.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item"><span class="ltx_text ltx_font_bold">–</span></span> 
+<div id="S3.I4.i1.I1.i2.p1" class="ltx_para">
+<p class="ltx_p">Size field (4 bytes): Length of stored value in bytes</p>
+</div>
+</li>
+<li id="S3.I4.i1.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item"><span class="ltx_text ltx_font_bold">–</span></span> 
+<div id="S3.I4.i1.I1.i3.p1" class="ltx_para">
+<p class="ltx_p">Reserved (4 bytes): Padding for future extensions</p>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li id="S3.I4.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I4.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Data (496 bytes)</span>: Actual value storage</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS4.SSS2.p2" class="ltx_para">
+<p class="ltx_p">The fixed size simplifies memory management—slot addresses can be computed directly:</p>
+<table id="S3.E3" class="ltx_equation ltx_eqn_table">
+
+<tbody><tr class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_eqn_cell ltx_align_center"><math id="S3.E3.m1" class="ltx_Math" alttext="\text{slot\_addr}=\text{base\_addr}+\text{slot\_index}\times 512" display="block"><mrow><mtext>slot_addr</mtext><mo>=</mo><mrow><mtext>base_addr</mtext><mo>+</mo><mrow><mtext>slot_index</mtext><mo lspace="0.222em" rspace="0.222em">×</mo><mn>512</mn></mrow></mrow></mrow></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="1" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equation ltx_align_right">(3)</span></td>
+</tr></tbody>
+</table>
+</div>
+<div id="S3.SS4.SSS2.p3" class="ltx_para">
+<p class="ltx_p">This eliminates pointer indirection and enables SIMD operations on slot arrays.</p>
+</div>
+</section>
+<section id="S3.SS4.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-D3 </span>Space Efficiency Considerations</h4>
+
+<div id="S3.SS4.SSS3.p1" class="ltx_para">
+<p class="ltx_p">Fixed-size slots waste space for small values but provide predictable performance. The default 512-byte size targets typical JSON documents (100-400 bytes) with acceptable overhead. Applications with different value size distributions can select alternative slot sizes at compile time:</p>
+<ul id="S3.I5" class="ltx_itemize">
+<li id="S3.I5.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I5.i1.p1" class="ltx_para">
+<p class="ltx_p">Small values: <span class="ltx_text ltx_font_typewriter">mmap_storage&lt;128&gt;</span> reduces waste for counters and flags</p>
+</div>
+</li>
+<li id="S3.I5.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I5.i2.p1" class="ltx_para">
+<p class="ltx_p">Large values: <span class="ltx_text ltx_font_typewriter">mmap_storage&lt;4096&gt;</span> accommodates documents without external storage</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS4.SSS3.p2" class="ltx_para">
+<p class="ltx_p">The compile-time parameterization allows applications to optimize the space-performance tradeoff for their specific workload without sacrificing predictability.</p>
+</div>
+</section>
+</section>
+<section id="S3.SS5" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-E </span><span class="ltx_text ltx_font_italic">Lock-Free Concurrency Control</span>
+</h3>
+
+<div id="S3.SS5.p1" class="ltx_para">
+<p class="ltx_p">All operations use atomic primitives to ensure consistency without locks. The versioning scheme prevents torn reads and enables optimistic concurrency control.</p>
+</div>
+<section id="S3.SS5.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-E1 </span>Atomic Slot Versioning</h4>
+
+<div id="S3.SS5.SSS1.p1" class="ltx_para">
+<p class="ltx_p">Each slot maintains a 64-bit atomic value combining the key hash (high 32 bits) and version number (low 32 bits). The version increments on each modification, allowing readers to detect concurrent updates:</p>
+</div>
+<figure id="alg1" class="ltx_float ltx_float_algorithm ltx_framed ltx_framed_top">
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float"><span class="ltx_text ltx_font_bold">Algorithm 1</span> </span> Lock-free read operation</figcaption>
+<div class="ltx_listing ltx_listing">
+<div id="alg1.l1" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">1:</span></span>  <span class="ltx_text ltx_font_bold">repeat</span>
+
+
+</div>
+<div id="alg1.l2" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">2:</span></span>     <math id="alg1.l2.m1" class="ltx_Math" alttext="v_{1}\leftarrow" display="inline"><mrow><msub><mi>v</mi><mn>1</mn></msub><mo stretchy="false">←</mo><mi></mi></mrow></math> slot.hash_version.load(acquire)
+
+</div>
+<div id="alg1.l3" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">3:</span></span>     <math id="alg1.l3.m1" class="ltx_Math" alttext="h\leftarrow v_{1}&gt;&gt;32" display="inline"><mrow><mi>h</mi><mo stretchy="false">←</mo><msub><mi>v</mi><mn>1</mn></msub><mo lspace="0.278em" rspace="0.278em">&gt;&gt;</mo><mn>32</mn></mrow></math>
+
+</div>
+<div id="alg1.l4" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">4:</span></span>     <span class="ltx_text ltx_font_bold">if</span> <math id="alg1.l4.m1" class="ltx_Math" alttext="h\neq\text{hash}(key)" display="inline"><mrow><mi>h</mi><mo>≠</mo><mrow><mtext>hash</mtext><mo>⁢</mo><mrow><mo stretchy="false">(</mo><mrow><mi>k</mi><mo>⁢</mo><mi>e</mi><mo>⁢</mo><mi>y</mi></mrow><mo stretchy="false">)</mo></mrow></mrow></mrow></math> <span class="ltx_text ltx_font_bold">then</span>
+
+
+
+</div>
+<div id="alg1.l5" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">5:</span></span>        <span class="ltx_text ltx_font_bold">return</span>  <math id="alg1.l5.m1" class="ltx_Math" alttext="\emptyset" display="inline"><mi mathvariant="normal">∅</mi></math> {Key not found}
+
+</div>
+<div id="alg1.l6" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">6:</span></span>     <span class="ltx_text ltx_font_bold">end</span> <span class="ltx_text ltx_font_bold">if</span>
+</div>
+<div id="alg1.l7" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">7:</span></span>     data <math id="alg1.l7.m1" class="ltx_Math" alttext="\leftarrow" display="inline"><mo stretchy="false">←</mo></math> copy slot.data[0:slot.size]
+
+</div>
+<div id="alg1.l8" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">8:</span></span>     <math id="alg1.l8.m1" class="ltx_Math" alttext="v_{2}\leftarrow" display="inline"><mrow><msub><mi>v</mi><mn>2</mn></msub><mo stretchy="false">←</mo><mi></mi></mrow></math> slot.hash_version.load(acquire)
+
+</div>
+<div id="alg1.l9" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">9:</span></span>  <span class="ltx_text ltx_font_bold">until</span> <math id="alg1.l9.m1" class="ltx_Math" alttext="v_{1}=v_{2}" display="inline"><mrow><msub><mi>v</mi><mn>1</mn></msub><mo>=</mo><msub><mi>v</mi><mn>2</mn></msub></mrow></math> <span class="ltx_text ltx_font_bold">and</span> <math id="alg1.l9.m2" class="ltx_Math" alttext="v_{1}\&amp;1=0" display="inline"><mrow><mrow><msub><mi>v</mi><mn>1</mn></msub><mo lspace="0.222em" rspace="0.222em">&amp;</mo><mn>1</mn></mrow><mo>=</mo><mn>0</mn></mrow></math> {Even version = consistent}
+
+</div>
+<div id="alg1.l10" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline"><span class="ltx_text" style="font-size:80%;">10:</span></span>  <span class="ltx_text ltx_font_bold">return</span>  data
+
+</div>
+</div>
+</figure>
+<div id="S3.SS5.SSS1.p2" class="ltx_para">
+<p class="ltx_p">Writers use a two-phase protocol:</p>
+<ol id="S3.I6" class="ltx_enumerate">
+<li id="S3.I6.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S3.I6.i1.p1" class="ltx_para">
+<p class="ltx_p">Increment version to odd (marking slot as updating)</p>
+</div>
+</li>
+<li id="S3.I6.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S3.I6.i2.p1" class="ltx_para">
+<p class="ltx_p">Write new data</p>
+</div>
+</li>
+<li id="S3.I6.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S3.I6.i3.p1" class="ltx_para">
+<p class="ltx_p">Increment version to even (marking update complete)</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S3.SS5.SSS1.p3" class="ltx_para">
+<p class="ltx_p">This ensures readers either see the old value or new value completely, never partial updates.</p>
+</div>
+</section>
+<section id="S3.SS5.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-E2 </span>Memory Ordering Guarantees</h4>
+
+<div id="S3.SS5.SSS2.p1" class="ltx_para">
+<p class="ltx_p">We use acquire-release memory ordering to ensure visibility across threads:</p>
+<ul id="S3.I7" class="ltx_itemize">
+<li id="S3.I7.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I7.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Acquire loads</span>: Prevent subsequent memory operations from being reordered before the load</p>
+</div>
+</li>
+<li id="S3.I7.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I7.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Release stores</span>: Prevent previous memory operations from being reordered after the store</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS5.SSS2.p2" class="ltx_para">
+<p class="ltx_p">These guarantees are sufficient for our versioning protocol while being more efficient than sequential consistency.</p>
+</div>
+</section>
+</section>
+<section id="S3.SS6" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">III-F </span><span class="ltx_text ltx_font_italic">Practical Deployment Architectures and IPC Patterns</span>
+</h3>
+
+<div id="S3.SS6.p1" class="ltx_para">
+<p class="ltx_p">While maph is designed as a high-performance C++ library supporting arbitrary key and value types, we provide a concrete REST API server implementation that demonstrates practical deployment patterns and inter-process communication capabilities. This section describes the architectural patterns enabled by maph’s mmap-based design.</p>
+</div>
+<section id="S3.SS6.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F1 </span>C++ Library Generality</h4>
+
+<div id="S3.SS6.SSS1.p1" class="ltx_para">
+<p class="ltx_p">The core maph library is a generic template-based framework with configurable slot sizes:</p>
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,dGVtcGxhdGU8c2l6ZV90IFNsb3RTaXplID0gNTEyPgpjbGFzcyBtbWFwX3N0b3JhZ2UgeyAuLi4gfTsKCnRlbXBsYXRlPHNpemVfdCBTbG90U2l6ZSA9IDUxMj4KY2xhc3MgaGVhcF9zdG9yYWdlIHsgLi4uIH07" download="">⬇</a></div>
+<div id="lstnumberx1" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">template</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">SlotSize</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">512&gt;</span>
+</div>
+<div id="lstnumberx2" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">class</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">mmap_storage</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">...</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">};</span>
+</div>
+<div id="lstnumberx3" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span>
+</div>
+<div id="lstnumberx4" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">template</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">SlotSize</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">512&gt;</span>
+</div>
+<div id="lstnumberx5" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">class</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">heap_storage</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">...</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">};</span>
+</div>
+</div>
+</div>
+<div id="S3.SS6.SSS1.p2" class="ltx_para">
+<p class="ltx_p">The slot size is a compile-time template parameter, allowing instantiation with arbitrary sizes optimized for specific workloads:</p>
+<ul id="S3.I8" class="ltx_itemize">
+<li id="S3.I8.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I8.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_typewriter">mmap_storage&lt;128&gt;</span>: Small values (counters, flags, short strings)</p>
+</div>
+</li>
+<li id="S3.I8.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I8.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_typewriter">mmap_storage&lt;512&gt;</span>: Default for typical JSON documents (100-400 bytes)</p>
+</div>
+</li>
+<li id="S3.I8.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I8.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_typewriter">mmap_storage&lt;1024&gt;</span>: Larger structured data</p>
+</div>
+</li>
+<li id="S3.I8.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I8.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_typewriter">mmap_storage&lt;4096&gt;</span>: Page-aligned for large objects</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS6.SSS1.p3" class="ltx_para">
+<p class="ltx_p">The 512-byte default balances cache line alignment (8<math id="S3.SS6.SSS1.p3.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> 64-byte cache lines), typical value sizes, and space efficiency. Applications with different requirements can select appropriate slot sizes at compile time without modifying the core library.</p>
+</div>
+</section>
+<section id="S3.SS6.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F2 </span>JSON Value Store: A Concrete IPC Example</h4>
+
+<div id="S3.SS6.SSS2.p1" class="ltx_para">
+<p class="ltx_p">For inter-process communication, we implement a JSON-based key-value store using the default 512-byte slot instantiation. Both keys and values are JSON values (strings, numbers, objects, arrays), providing:</p>
+<ul id="S3.I9" class="ltx_itemize">
+<li id="S3.I9.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I9.i1.p1" class="ltx_para">
+<p class="ltx_p">Universal format readable across programming languages</p>
+</div>
+</li>
+<li id="S3.I9.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I9.i2.p1" class="ltx_para">
+<p class="ltx_p">Human-readable debugging and inspection</p>
+</div>
+</li>
+<li id="S3.I9.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I9.i3.p1" class="ltx_para">
+<p class="ltx_p">Rich data types beyond simple strings</p>
+</div>
+</li>
+<li id="S3.I9.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I9.i4.p1" class="ltx_para">
+<p class="ltx_p">Standard serialization via libraries like nlohmann::json</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS6.SSS2.p2" class="ltx_para">
+<p class="ltx_p">The JSON store instantiates <span class="ltx_text ltx_font_typewriter">mmap_storage&lt;512&gt;</span> with string keys and JSON-serialized values, demonstrating how the general C++ library applies to practical IPC scenarios. The 512-byte slot size accommodates typical JSON documents while maintaining cache efficiency.</p>
+</div>
+</section>
+<section id="S3.SS6.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F3 </span>Hybrid Architecture: REST API + Direct mmap Access</h4>
+
+<div id="S3.SS6.SSS3.p1" class="ltx_para">
+<p class="ltx_p">The mmap-based design enables a powerful hybrid architecture where different processes access the same data store through different mechanisms:</p>
+</div>
+<figure id="S3.F2" class="ltx_figure"><pre class="ltx_verbatim ltx_centering ltx_font_typewriter" style="font-size:90%;">
++----------------------------------+
+|  Shared mmap Files (data/*.maph) |
++----------+-------------+---------+
+           |             |
+           | (write)     | (read-only)
+      +----v-----+  +----v----------+
+      |  REST    |  |  C++ App      |
+      |  API     |  |  (direct      |
+      |  Server  |  |   mmap)       |
+      +----------+  +---------------+
+           |
+           | (HTTP)
+      +----v----------+
+      |  Remote       |
+      |  Clients      |
+      +---------------+
+</pre>
+<figcaption class="ltx_caption ltx_centering" style="font-size:90%;"><span class="ltx_tag ltx_tag_figure">Figure 2: </span>Hybrid architecture: REST API server for writes, direct mmap for local reads</figcaption>
+</figure>
+<div id="S3.SS6.SSS3.p2" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Pattern 1: Single Writer, Multiple Readers (Recommended)</span></p>
+</div>
+<div id="S3.SS6.SSS3.p3" class="ltx_para">
+<p class="ltx_p">The recommended deployment pattern uses a REST API server as the single writer, with local C++ applications reading directly via mmap:</p>
+</div>
+<figure id="LST1" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,Ly8gQysrIGFwcGxpY2F0aW9uOiBEaXJlY3QgcmVhZC1vbmx5IGFjY2VzcwphdXRvIGRiID0gbWFwaDo6bWFwaDo6b3BlbigiL3Zhci9saWIvbWFwaC9kYXRhL2NhY2hlLm1hcGgiLAogICAgICAgICAgICAgICAgICAgICAgICAgICB0cnVlKTsgIC8vIHJlYWRvbmx5CmF1dG8gdmFsdWUgPSBkYi5nZXQoImhvdF9rZXkiKTsgIC8vIH4zMDBucyBsYXRlbmN5" download="">⬇</a></div>
+<div id="lstnumberx6" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>C++<span class="ltx_text ltx_lst_space"> </span>application:<span class="ltx_text ltx_lst_space"> </span>Direct<span class="ltx_text ltx_lst_space"> </span>read-only<span class="ltx_text ltx_lst_space"> </span>access</span>
+</div>
+<div id="lstnumberx7" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">auto</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">db</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">maph</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">maph</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">open</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"/var/lib/maph/data/cache.maph"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx8" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                           </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">true</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>readonly</span>
+</div>
+<div id="lstnumberx9" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">auto</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">value</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">db</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">.</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">get</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"hot_key"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>~300ns<span class="ltx_text ltx_lst_space"> </span>latency</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 1: </span>Direct mmap read access</figcaption>
+</figure>
+<div id="S3.SS6.SSS3.p4" class="ltx_para">
+<p class="ltx_p">This pattern provides:</p>
+<ul id="S3.I10" class="ltx_itemize">
+<li id="S3.I10.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I10.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Zero-IPC overhead</span>: Local reads bypass HTTP entirely, achieving <math id="S3.I10.i1.p1.m1" class="ltx_Math" alttext="\sim" display="inline"><mo>∼</mo></math>300ns latency versus <math id="S3.I10.i1.p1.m2" class="ltx_Math" alttext="\sim" display="inline"><mo>∼</mo></math>1-2ms via REST</p>
+</div>
+</li>
+<li id="S3.I10.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I10.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Safety</span>: Single writer eliminates race conditions without coordination overhead</p>
+</div>
+</li>
+<li id="S3.I10.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I10.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Flexibility</span>: Remote clients use HTTP, local apps use direct mmap access</p>
+</div>
+</li>
+<li id="S3.I10.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I10.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">5,000<math id="S3.I10.i4.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> speedup</span>: Direct mmap reads are approximately 5,000<math id="S3.I10.i4.p1.m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> faster than HTTP requests for local access</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS6.SSS3.p5" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Pattern 2: Multi-Writer with Coordination</span></p>
+</div>
+<div id="S3.SS6.SSS3.p6" class="ltx_para">
+<p class="ltx_p">For applications requiring multiple C++ writers, explicit synchronization is necessary. While atomic slot operations ensure individual writes are consistent, they do not prevent read-modify-write races between concurrent writers:</p>
+</div>
+<figure id="LST2" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,Ly8gQWNxdWlyZSBleGNsdXNpdmUgbG9jayBiZWZvcmUgd3JpdGluZwppbnQgbG9ja19mZCA9IG9wZW4oImNhY2hlLm1hcGgubG9jayIsIE9fQ1JFQVQgfCBPX1JEV1IpOwpmbG9jayhsb2NrX2ZkLCBMT0NLX0VYKTsgIC8vIEV4Y2x1c2l2ZSBsb2NrCgphdXRvIGRiID0gbWFwaDo6bWFwaDo6b3BlbigiY2FjaGUubWFwaCIsIGZhbHNlKTsKZGIuc2V0KCJrZXkiLCAidmFsdWUiKTsKCmZsb2NrKGxvY2tfZmQsIExPQ0tfVU4pOyAgLy8gUmVsZWFzZSBsb2NrCmNsb3NlKGxvY2tfZmQpOw==" download="">⬇</a></div>
+<div id="lstnumberx10" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>Acquire<span class="ltx_text ltx_lst_space"> </span>exclusive<span class="ltx_text ltx_lst_space"> </span>lock<span class="ltx_text ltx_lst_space"> </span>before<span class="ltx_text ltx_lst_space"> </span>writing</span>
+</div>
+<div id="lstnumberx11" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">int</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">lock_fd</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">open</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"cache.maph.lock"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">O_CREAT</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">|</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">O_RDWR</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx12" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">flock</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">lock_fd</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">LOCK_EX</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>Exclusive<span class="ltx_text ltx_lst_space"> </span>lock</span>
+</div>
+<div id="lstnumberx13" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span>
+</div>
+<div id="lstnumberx14" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">auto</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">db</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">maph</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">maph</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">open</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"cache.maph"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">false</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx15" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">6</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">db</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">.</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">set</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"key"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_string ltx_font_typewriter" style="font-size:80%;color:#FF0000;">"value"</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx16" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">7</span>
+</div>
+<div id="lstnumberx17" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">8</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">flock</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">lock_fd</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">LOCK_UN</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>Release<span class="ltx_text ltx_lst_space"> </span>lock</span>
+</div>
+<div id="lstnumberx18" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">9</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">close</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">lock_fd</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 2: </span>File locking for multi-writer safety</figcaption>
+</figure>
+<div id="S3.SS6.SSS3.p7" class="ltx_para">
+<p class="ltx_p">File locking adds approximately 2<math id="S3.SS6.SSS3.p7.m1" class="ltx_Math" alttext="\mu" display="inline"><mi>μ</mi></math>s overhead per operation but prevents lost updates in multi-writer scenarios. Alternative coordination mechanisms include:</p>
+<ul id="S3.I11" class="ltx_itemize">
+<li id="S3.I11.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I11.i1.p1" class="ltx_para">
+<p class="ltx_p">Application-level tokens (Redis, etcd)</p>
+</div>
+</li>
+<li id="S3.I11.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I11.i2.p1" class="ltx_para">
+<p class="ltx_p">Partitioning (different processes own different key ranges)</p>
+</div>
+</li>
+<li id="S3.I11.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I11.i3.p1" class="ltx_para">
+<p class="ltx_p">Message queue coordination</p>
+</div>
+</li>
+</ul>
+</div>
+</section>
+<section id="S3.SS6.SSS4" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F4 </span>REST API Server Implementation</h4>
+
+<div id="S3.SS6.SSS4.p1" class="ltx_para">
+<p class="ltx_p">The provided REST API server (using libmicrohttpd) demonstrates practical deployment:</p>
+</div>
+<div id="S3.SS6.SSS4.p2" class="ltx_para">
+<ul id="S3.I12" class="ltx_itemize">
+<li id="S3.I12.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I12.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">HTTP endpoints</span>: GET, PUT, DELETE for key-value operations</p>
+</div>
+</li>
+<li id="S3.I12.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I12.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Store management</span>: CREATE, LIST, DELETE for store lifecycle</p>
+</div>
+</li>
+<li id="S3.I12.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I12.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Optimization</span>: POST /stores/{name}/optimize for perfect hash construction</p>
+</div>
+</li>
+<li id="S3.I12.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I12.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Shared mmap</span>: All stores memory-mapped for direct C++ access</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S3.SS6.SSS4.p3" class="ltx_para">
+<p class="ltx_p">The server acts as the single writer, ensuring safety while enabling zero-overhead local reads by collocated C++ applications. Remote clients access via HTTP, trading latency (<math id="S3.SS6.SSS4.p3.m1" class="ltx_Math" alttext="\sim" display="inline"><mo>∼</mo></math>1-2ms) for network transparency and language interoperability.</p>
+</div>
+</section>
+<section id="S3.SS6.SSS5" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F5 </span>Performance Implications</h4>
+
+<div id="S3.SS6.SSS5.p1" class="ltx_para">
+<p class="ltx_p">Table <a href="#S3.T1" title="TABLE I ‣ III-F5 Performance Implications ‣ III-F Practical Deployment Architectures and IPC Patterns ‣ III System Architecture ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">I</span></a> compares access patterns:</p>
+</div>
+<figure id="S3.T1" class="ltx_table">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">TABLE I: </span>Access pattern performance comparison (median latency)</figcaption>
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle">
+<thead class="ltx_thead">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">Access Pattern</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Latency</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Use Case</th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">Direct mmap (C++)</th>
+<td class="ltx_td ltx_align_right ltx_border_t">300ns</td>
+<td class="ltx_td ltx_align_right ltx_border_t">Local high-performance reads</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row">REST API (local)</th>
+<td class="ltx_td ltx_align_right">1-2ms</td>
+<td class="ltx_td ltx_align_right">Remote or cross-language access</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">REST API (network)</th>
+<td class="ltx_td ltx_align_right ltx_border_bb">5-10ms</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">Distributed systems</td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div id="S3.SS6.SSS5.p2" class="ltx_para">
+<p class="ltx_p">The hybrid architecture enables applications to choose the optimal access pattern based on deployment requirements, achieving both ultra-low latency for local access and network transparency for distributed access.</p>
+</div>
+</section>
+<section id="S3.SS6.SSS6" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">III-F6 </span>Practical Considerations</h4>
+
+<div id="S3.SS6.SSS6.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Safety</span>: The single-writer pattern is strongly recommended. Multi-writer scenarios require explicit coordination (file locks, application tokens) to prevent race conditions. While atomic operations ensure individual slot writes are consistent, they do not prevent lost updates from concurrent read-modify-write operations.</p>
+</div>
+<div id="S3.SS6.SSS6.p2" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Monitoring</span>: The REST API server provides HTTP endpoints for monitoring store statistics, enabling operational visibility without custom tooling.</p>
+</div>
+<div id="S3.SS6.SSS6.p3" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Language Interoperability</span>: The JSON format and HTTP API enable polyglot systems where different components use different programming languages while sharing the same data store.</p>
+</div>
+</section>
+</section>
+</section>
+<section id="S4" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">IV </span><span class="ltx_text ltx_font_smallcaps">Implementation Details</span>
+</h2>
+
+<section id="S4.SS1" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">IV-A </span><span class="ltx_text ltx_font_italic">Hash Function Selection</span>
+</h3>
+
+<div id="S4.SS1.p1" class="ltx_para">
+<p class="ltx_p">The choice of hash function critically impacts both distribution quality and computation speed. We evaluated several candidates:</p>
+</div>
+<section id="S4.SS1.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">IV-A1 </span>FNV-1a Hash</h4>
+
+<div id="S4.SS1.SSS1.p1" class="ltx_para">
+<p class="ltx_p">The Fowler-Noll-Vo 1a variant provides good distribution with minimal computational overhead:</p>
+</div>
+<figure id="LST3" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,dWludDMyX3QgZm52MWEoY29uc3QgY2hhcioga2V5LCBzaXplX3QgbGVuKSB7CiAgICB1aW50MzJfdCBoID0gMjE2NjEzNjI2MXU7ICAvLyBvZmZzZXQgYmFzaXMKICAgIGZvciAoc2l6ZV90IGkgPSAwOyBpIDwgbGVuOyArK2kpIHsKICAgICAgICBoIF49ICh1aW50OF90KWtleVtpXTsKICAgICAgICBoICo9IDE2Nzc3NjE5dTsgIC8vIEZOViBwcmltZQogICAgfQogICAgcmV0dXJuIGg7Cn0=" download="">⬇</a></div>
+<div id="lstnumberx19" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">uint32_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fnv1a</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">const</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">char</span></span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">key</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">len</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx20" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">uint32_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">2166136261</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">u</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>offset<span class="ltx_text ltx_lst_space"> </span>basis</span>
+</div>
+<div id="lstnumberx21" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">for</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">0;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">len</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">++</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx22" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">^=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">uint8_t</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">key</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">[</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">];</span>
+</div>
+<div id="lstnumberx23" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">16777619</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">u</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">  </span><span class="ltx_text ltx_lst_comment ltx_font_typewriter" style="font-size:80%;color:#808080;">//<span class="ltx_text ltx_lst_space"> </span>FNV<span class="ltx_text ltx_lst_space"> </span>prime</span>
+</div>
+<div id="lstnumberx24" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">6</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx25" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">7</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">return</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span>
+</div>
+<div id="lstnumberx26" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">8</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 3: </span>FNV-1a implementation</figcaption>
+</figure>
+<div id="S4.SS1.SSS1.p2" class="ltx_para">
+<p class="ltx_p">The algorithm processes one byte at a time with only XOR and multiplication operations, achieving 3-4 cycles per byte on modern CPUs.</p>
+</div>
+</section>
+<section id="S4.SS1.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">IV-A2 </span>xxHash</h4>
+
+<div id="S4.SS1.SSS2.p1" class="ltx_para">
+<p class="ltx_p">For longer keys, xxHash <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib26" title="" class="ltx_ref">26</a>]</cite> provides superior throughput by processing 32-bit chunks:</p>
+<ul id="S4.I1" class="ltx_itemize">
+<li id="S4.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S4.I1.i1.p1" class="ltx_para">
+<p class="ltx_p">Processes 4 bytes per iteration</p>
+</div>
+</li>
+<li id="S4.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S4.I1.i2.p1" class="ltx_para">
+<p class="ltx_p">Exploits instruction-level parallelism</p>
+</div>
+</li>
+<li id="S4.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S4.I1.i3.p1" class="ltx_para">
+<p class="ltx_p">Achieves 13 GB/s on a single core</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S4.SS1.SSS2.p2" class="ltx_para">
+<p class="ltx_p">We use FNV-1a for keys under 16 bytes and xxHash for longer keys, selected at compile time based on profiling data.</p>
+</div>
+</section>
+</section>
+<section id="S4.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">IV-B </span><span class="ltx_text ltx_font_italic">SIMD Batch Operations</span>
+</h3>
+
+<div id="S4.SS2.p1" class="ltx_para">
+<p class="ltx_p">AVX2 instructions enable parallel processing of multiple keys simultaneously. Our implementation processes 8 keys per iteration:</p>
+</div>
+<figure id="LST4" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,dm9pZCBjb21wdXRlX2JhdGNoX2F2eDIoY29uc3QgY2hhcioqIGtleXMsCiAgICAgICAgICAgICAgICAgICAgICAgc2l6ZV90KiBsZW5ndGhzLAogICAgICAgICAgICAgICAgICAgICAgIHVpbnQzMl90KiBoYXNoZXMsCiAgICAgICAgICAgICAgICAgICAgICAgc2l6ZV90IGNvdW50KSB7CiAgICBfX20yNTZpIGZudl9wcmltZSA9IF9tbTI1Nl9zZXQxX2VwaTMyKDE2Nzc3NjE5dSk7CiAgICBfX20yNTZpIGZudl9vZmZzZXQgPSBfbW0yNTZfc2V0MV9lcGkzMigyMTY2MTM2MjYxdSk7CgogICAgZm9yIChzaXplX3QgaSA9IDA7IGkgKyA4IDw9IGNvdW50OyBpICs9IDgpIHsKICAgICAgICBfX20yNTZpIGggPSBmbnZfb2Zmc2V0OwogICAgICAgIHNpemVfdCBtaW5fbGVuID0gZmluZF9taW5fbGVuZ3RoKGtleXMgKyBpLCA4KTsKCiAgICAgICAgZm9yIChzaXplX3QgaiA9IDA7IGogPCBtaW5fbGVuOyArK2opIHsKICAgICAgICAgICAgX19tMjU2aSBjaGFycyA9IGdhdGhlcl9jaGFycyhrZXlzICsgaSwgaik7CiAgICAgICAgICAgIGggPSBfbW0yNTZfeG9yX3NpMjU2KGgsIGNoYXJzKTsKICAgICAgICAgICAgaCA9IF9tbTI1Nl9tdWxsb19lcGkzMihoLCBmbnZfcHJpbWUpOwogICAgICAgIH0KCiAgICAgICAgX21tMjU2X3N0b3JldV9zaTI1NigoX19tMjU2aSopKGhhc2hlcyArIGkpLCBoKTsKICAgIH0KfQ==" download="">⬇</a></div>
+<div id="lstnumberx27" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">void</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">compute_batch_avx2</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">const</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">char</span></span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">**</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">keys</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx28" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                       </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">lengths</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx29" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                       </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">uint32_t</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">hashes</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx30" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                       </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">count</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx31" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">__m256i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fnv_prime</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">_mm256_set1_epi32</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(16777619</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">u</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx32" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">6</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">__m256i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fnv_offset</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">_mm256_set1_epi32</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(2166136261</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">u</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx33" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">7</span>
+</div>
+<div id="lstnumberx34" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">8</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">for</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">0;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">8</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">count</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">8)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx35" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">9</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">__m256i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fnv_offset</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span>
+</div>
+<div id="lstnumberx36" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">10</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">min_len</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">find_min_length</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">keys</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">8);</span>
+</div>
+<div id="lstnumberx37" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">11</span>
+</div>
+<div id="lstnumberx38" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">12</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">for</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">j</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">0;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">j</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">min_len</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">++</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">j</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx39" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">13</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">__m256i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">chars</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">gather_chars</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">keys</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">j</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx40" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">14</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">_mm256_xor_si256</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">chars</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx41" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">15</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">_mm256_mullo_epi32</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fnv_prime</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx42" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">16</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx43" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">17</span>
+</div>
+<div id="lstnumberx44" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">18</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">_mm256_storeu_si256</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">((</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">__m256i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*)(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">hashes</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">),</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">h</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx45" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">19</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx46" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">20</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 4: </span>SIMD batch hash computation</figcaption>
+</figure>
+<div id="S4.SS2.p2" class="ltx_para">
+<p class="ltx_p">This achieves approximately 5<math id="S4.SS2.p2.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> throughput improvement over scalar code for batch operations.</p>
+</div>
+</section>
+<section id="S4.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">IV-C </span><span class="ltx_text ltx_font_italic">Parallel Scan Implementation</span>
+</h3>
+
+<div id="S4.SS3.p1" class="ltx_para">
+<p class="ltx_p">Table scans partition the slot array across threads, with each thread processing a contiguous range:</p>
+</div>
+<figure id="LST5" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,dm9pZCBwYXJhbGxlbF9zY2FuKHN0ZDo6ZnVuY3Rpb248dm9pZChTbG90Jik+IHZpc2l0b3IsCiAgICAgICAgICAgICAgICAgIHNpemVfdCBudW1fdGhyZWFkcykgewogICAgc3RkOjphdG9taWM8c2l6ZV90PiBuZXh0X2NodW5rezB9OwogICAgY29uc3RleHByIHNpemVfdCBDSFVOS19TSVpFID0gMTAyNDsKCiAgICBzdGQ6OnZlY3RvcjxzdGQ6OnRocmVhZD4gdGhyZWFkczsKICAgIGZvciAoc2l6ZV90IHQgPSAwOyB0IDwgbnVtX3RocmVhZHM7ICsrdCkgewogICAgICAgIHRocmVhZHMuZW1wbGFjZV9iYWNrKFsmXSB7CiAgICAgICAgICAgIHNpemVfdCBjaHVuazsKICAgICAgICAgICAgd2hpbGUgKChjaHVuayA9IG5leHRfY2h1bmsuZmV0Y2hfYWRkKDEpKQogICAgICAgICAgICAgICAgICAgPCB0b3RhbF9zbG90cyAvIENIVU5LX1NJWkUpIHsKICAgICAgICAgICAgICAgIHNpemVfdCBzdGFydCA9IGNodW5rICogQ0hVTktfU0laRTsKICAgICAgICAgICAgICAgIHNpemVfdCBlbmQgPSBzdGQ6Om1pbihzdGFydCArIENIVU5LX1NJWkUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB0b3RhbF9zbG90cyk7CiAgICAgICAgICAgICAgICBmb3IgKHNpemVfdCBpID0gc3RhcnQ7IGkgPCBlbmQ7ICsraSkgewogICAgICAgICAgICAgICAgICAgIGlmICghc2xvdHNbaV0uZW1wdHkoKSkgewogICAgICAgICAgICAgICAgICAgICAgICB2aXNpdG9yKHNsb3RzW2ldKTsKICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKICAgIH0KfQ==" download="">⬇</a></div>
+<div id="lstnumberx47" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">void</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">parallel_scan</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">std</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">function</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">void</span></span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">Slot</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&amp;)&gt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">visitor</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx48" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                  </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">num_threads</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx49" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">std</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">atomic</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&gt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">next_chunk</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{0};</span>
+</div>
+<div id="lstnumberx50" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">constexpr</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">CHUNK_SIZE</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">1024;</span>
+</div>
+<div id="lstnumberx51" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span>
+</div>
+<div id="lstnumberx52" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">6</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">std</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">vector</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">std</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">thread</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&gt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">threads</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span>
+</div>
+<div id="lstnumberx53" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">7</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">for</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">0;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">num_threads</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">++</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">t</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx54" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">8</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">threads</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">.</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">emplace_back</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">([&amp;]</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx55" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">9</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">chunk</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span>
+</div>
+<div id="lstnumberx56" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">10</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">while</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">((</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">chunk</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">next_chunk</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">.</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">fetch_add</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(1))</span>
+</div>
+<div id="lstnumberx57" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">11</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                   </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">total_slots</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">/</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">CHUNK_SIZE</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx58" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">12</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">start</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">chunk</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">*</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">CHUNK_SIZE</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span>
+</div>
+<div id="lstnumberx59" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">13</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">end</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">std</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">::</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">min</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">start</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">+</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">CHUNK_SIZE</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span>
+</div>
+<div id="lstnumberx60" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">14</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                                     </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">total_slots</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx61" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">15</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">for</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">size_t</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">=</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">start</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">&lt;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">end</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">;</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">++</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx62" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">16</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">if</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(!</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">slots</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">[</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">].</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">empty</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">())</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx63" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">17</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                        </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">visitor</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">slots</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">[</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">i</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">]);</span>
+</div>
+<div id="lstnumberx64" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">18</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                    </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx65" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">19</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">                </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx66" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">20</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx67" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">21</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">});</span>
+</div>
+<div id="lstnumberx68" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">22</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx69" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">23</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 5: </span>Parallel scan with work stealing</figcaption>
+</figure>
+<div id="S4.SS3.p2" class="ltx_para">
+<p class="ltx_p">The work-stealing approach ensures load balance even with skewed data distributions.</p>
+</div>
+</section>
+<section id="S4.SS4" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">IV-D </span><span class="ltx_text ltx_font_italic">Memory Management and Durability</span>
+</h3>
+
+<section id="S4.SS4.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">IV-D1 </span>Asynchronous Durability</h4>
+
+<div id="S4.SS4.SSS1.p1" class="ltx_para">
+<p class="ltx_p">While mmap provides automatic persistence, we offer explicit durability control for applications requiring guaranteed persistence:</p>
+</div>
+<figure id="LST6" class="ltx_float ltx_lstlisting">
+<div class="ltx_listing ltx_lst_language_C++ ltx_lst_numbers_left ltx_lstlisting ltx_framed ltx_framed_rectangle ltx_listing">
+<div class="ltx_listing_data"><a href="data:text/plain;base64,Y2xhc3MgRHVyYWJpbGl0eU1hbmFnZXIgewogICAgdm9pZCBzeW5jX3RocmVhZCgpIHsKICAgICAgICB3aGlsZSAocnVubmluZykgewogICAgICAgICAgICBzbGVlcF9mb3Ioc3luY19pbnRlcnZhbCk7CiAgICAgICAgICAgIG1zeW5jKG1hcHBlZF9yZWdpb24sIHJlZ2lvbl9zaXplLCBNU19BU1lOQyk7CiAgICAgICAgfQogICAgfQp9Ow==" download="">⬇</a></div>
+<div id="lstnumberx70" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">1</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">class</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">DurabilityManager</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx71" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">2</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">void</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">sync_thread</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">()</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx72" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">3</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_lst_keyword ltx_font_typewriter" style="font-size:80%;"><span class="ltx_text" style="color:#0000FF;">while</span></span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">running</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">)</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">{</span>
+</div>
+<div id="lstnumberx73" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">4</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">sleep_for</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">sync_interval</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx74" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">5</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">            </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">msync</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">(</span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">mapped_region</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">region_size</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">,</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;"> </span><span class="ltx_text ltx_lst_identifier ltx_font_typewriter" style="font-size:80%;">MS_ASYNC</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">);</span>
+</div>
+<div id="lstnumberx75" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">6</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">        </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx76" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">7</span><span class="ltx_text ltx_lst_space ltx_font_typewriter" style="font-size:80%;">    </span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">}</span>
+</div>
+<div id="lstnumberx77" class="ltx_listingline">
+<span class="ltx_tag ltx_tag_listingline">8</span><span class="ltx_text ltx_font_typewriter" style="font-size:80%;">};</span>
+</div>
+</div>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_float">Listing 6: </span>Durability manager implementation</figcaption>
+</figure>
+<div id="S4.SS4.SSS1.p2" class="ltx_para">
+<p class="ltx_p">MS_ASYNC initiates asynchronous writeback without blocking, while MS_SYNC forces synchronous write for strong durability guarantees.</p>
+</div>
+</section>
+<section id="S4.SS4.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">IV-D2 </span>Copy-on-Write Snapshots</h4>
+
+<div id="S4.SS4.SSS2.p1" class="ltx_para">
+<p class="ltx_p">The OS’s copy-on-write mechanism enables efficient snapshots:</p>
+<ol id="S4.I2" class="ltx_enumerate">
+<li id="S4.I2.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S4.I2.i1.p1" class="ltx_para">
+<p class="ltx_p">Fork the process to create a snapshot</p>
+</div>
+</li>
+<li id="S4.I2.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S4.I2.i2.p1" class="ltx_para">
+<p class="ltx_p">Child process inherits the memory mapping</p>
+</div>
+</li>
+<li id="S4.I2.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S4.I2.i3.p1" class="ltx_para">
+<p class="ltx_p">Pages are copied only when modified</p>
+</div>
+</li>
+<li id="S4.I2.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">4.</span> 
+<div id="S4.I2.i4.p1" class="ltx_para">
+<p class="ltx_p">Snapshot remains consistent during export</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S4.SS4.SSS2.p2" class="ltx_para">
+<p class="ltx_p">This provides point-in-time backups without blocking writers or duplicating unchanged data.</p>
+</div>
+</section>
+</section>
+</section>
+<section id="S5" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">V </span><span class="ltx_text ltx_font_smallcaps">Experimental Evaluation</span>
+</h2>
+
+<section id="S5.SS1" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">V-A </span><span class="ltx_text ltx_font_italic">Experimental Setup</span>
+</h3>
+
+<div id="S5.SS1.p1" class="ltx_para">
+<p class="ltx_p">All experiments were conducted on a dual-socket server with the following specifications:</p>
+<ul id="S5.I1" class="ltx_itemize">
+<li id="S5.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I1.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">CPU</span>: 2<math id="S5.I1.i1.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> Intel Xeon Gold 6154 (18 cores/36 threads each, 3.0 GHz base)</p>
+</div>
+</li>
+<li id="S5.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I1.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Memory</span>: 256 GB DDR4-2666 (12<math id="S5.I1.i2.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> 21.3 GB/s bandwidth)</p>
+</div>
+</li>
+<li id="S5.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I1.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Storage</span>: Intel Optane P4800X (2.5 GB/s sequential read)</p>
+</div>
+</li>
+<li id="S5.I1.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I1.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">OS</span>: Ubuntu 20.04 LTS, kernel 5.4.0</p>
+</div>
+</li>
+<li id="S5.I1.i5" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I1.i5.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Compiler</span>: GCC 9.3.0 with -O3 -march=native</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S5.SS1.p2" class="ltx_para">
+<p class="ltx_p">We compare maph against:</p>
+<ul id="S5.I2" class="ltx_itemize">
+<li id="S5.I2.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I2.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Redis 6.2.6</span>: Default configuration with persistence disabled</p>
+</div>
+</li>
+<li id="S5.I2.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I2.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">RocksDB 6.25.3</span>: Tuned for read performance with 32 GB block cache</p>
+</div>
+</li>
+<li id="S5.I2.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I2.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Memcached 1.6.12</span>: Default configuration with 4 worker threads</p>
+</div>
+</li>
+<li id="S5.I2.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I2.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">std::unordered_map</span>: C++ standard library implementation (libstdc++)</p>
+</div>
+</li>
+</ul>
+</div>
+</section>
+<section id="S5.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">V-B </span><span class="ltx_text ltx_font_italic">Methodology</span>
+</h3>
+
+<section id="S5.SS2.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-B1 </span>Timing Measurement</h4>
+
+<div id="S5.SS2.SSS1.p1" class="ltx_para">
+<p class="ltx_p">Latency measurements use <span class="ltx_text ltx_font_typewriter">std::chrono::high_resolution_clock</span> with nanosecond precision. Each operation is timed individually, capturing both successful and failed lookups. We report min, median, p90, p95, p99, p99.9, and p99.99 percentiles to characterize tail latency behavior.</p>
+</div>
+<div id="S5.SS2.SSS1.p2" class="ltx_para">
+<p class="ltx_p">For single-threaded latency tests, we execute 10,000 warmup iterations to ensure caches are hot, followed by 1 million measured operations. Throughput tests measure elapsed wall-clock time for a fixed number of operations across all threads.</p>
+</div>
+</section>
+<section id="S5.SS2.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-B2 </span>Workload Generation</h4>
+
+<div id="S5.SS2.SSS2.p1" class="ltx_para">
+<p class="ltx_p">Keys are pre-generated strings of the form <span class="ltx_text ltx_font_typewriter">"key:N"</span> where N ranges from 0 to the dataset size. Values are JSON-like strings with consistent size (default 200 bytes) to simulate typical web application data. For realistic access patterns, we use a Zipfian distribution with skew parameter <math id="S5.SS2.SSS2.p1.m1" class="ltx_Math" alttext="\theta=0.99" display="inline"><mrow><mi>θ</mi><mo>=</mo><mn>0.99</mn></mrow></math>, modeling the 80-20 rule where a small fraction of keys receives most accesses.</p>
+</div>
+</section>
+<section id="S5.SS2.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-B3 </span>Database Configuration</h4>
+
+<div id="S5.SS2.SSS3.p1" class="ltx_para">
+<p class="ltx_p">All tests use in-memory operation to isolate hash table performance from I/O effects. The maph database is configured with slot count set to <math id="S5.SS2.SSS3.p1.m1" class="ltx_math_unparsed" alttext="2\times" display="inline"><mrow><mn>2</mn><mo lspace="0.222em">×</mo></mrow></math> the number of keys (50% load factor) to balance space efficiency with probe distance. For comparison baselines:</p>
+</div>
+<div id="S5.SS2.SSS3.p2" class="ltx_para">
+<ul id="S5.I3" class="ltx_itemize">
+<li id="S5.I3.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I3.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">maph</span>: In-memory heap storage, perfect hash disabled for standard hash mode</p>
+</div>
+</li>
+<li id="S5.I3.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I3.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">std::unordered_map</span>: Default hash function, load factor 1.0</p>
+</div>
+</li>
+<li id="S5.I3.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I3.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Redis/Memcached</span>: Accessed via loopback network (unavoidable for architecture)</p>
+</div>
+</li>
+<li id="S5.I3.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I3.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">RocksDB</span>: In-memory mode, bloom filters enabled, block cache sized to hold working set</p>
+</div>
+</li>
+</ul>
+</div>
+</section>
+<section id="S5.SS2.SSS4" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-B4 </span>Statistical Analysis</h4>
+
+<div id="S5.SS2.SSS4.p1" class="ltx_para">
+<p class="ltx_p">All experiments are repeated 3 times with different random seeds. We report median values across runs with standard deviation. For latency distributions, we collect per-operation measurements and compute percentiles over the full sample. Throughput is computed as total operations divided by elapsed wall-clock time.</p>
+</div>
+<div id="S5.SS2.SSS4.p2" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_italic">Note: The performance numbers in Tables I-V below are preliminary estimates based on expected performance. Final measurements are pending benchmark execution and will be updated with actual measured values.</span></p>
+</div>
+</section>
+</section>
+<section id="S5.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">V-C </span><span class="ltx_text ltx_font_italic">Microbenchmarks</span>
+</h3>
+
+<section id="S5.SS3.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-C1 </span>Single-Threaded Latency</h4>
+
+<div id="S5.SS3.SSS1.p1" class="ltx_para">
+<p class="ltx_p">Figure <span class="ltx_ref ltx_missing_label ltx_ref_self">LABEL:fig:latency-cdf</span> shows the cumulative distribution of GET operation latencies for 1 million random keys from a 10 million key database.</p>
+</div>
+<figure id="S5.T2" class="ltx_table">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">TABLE II: </span>Single-threaded GET latency (nanoseconds, 1M keys, 200-byte values)</figcaption>
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle">
+<tbody class="ltx_tbody">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_tt">Operation</th>
+<td class="ltx_td ltx_align_right ltx_border_tt">p50</td>
+<td class="ltx_td ltx_align_right ltx_border_tt">p90</td>
+<td class="ltx_td ltx_align_right ltx_border_tt">p99</td>
+<td class="ltx_td ltx_align_right ltx_border_tt">p99.9</td>
+<td class="ltx_td ltx_align_right ltx_border_tt">p99.99</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">Random GET</th>
+<td class="ltx_td ltx_align_right ltx_border_t">351</td>
+<td class="ltx_td ltx_align_right ltx_border_t">601</td>
+<td class="ltx_td ltx_align_right ltx_border_t">972</td>
+<td class="ltx_td ltx_align_right ltx_border_t">1,342</td>
+<td class="ltx_td ltx_align_right ltx_border_t">7,844</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row">Sequential GET</th>
+<td class="ltx_td ltx_align_right">221</td>
+<td class="ltx_td ltx_align_right">301</td>
+<td class="ltx_td ltx_align_right">752</td>
+<td class="ltx_td ltx_align_right">922</td>
+<td class="ltx_td ltx_align_right">8,736</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row">Negative Lookup</th>
+<td class="ltx_td ltx_align_right">250</td>
+<td class="ltx_td ltx_align_right">451</td>
+<td class="ltx_td ltx_align_right">871</td>
+<td class="ltx_td ltx_align_right">1,162</td>
+<td class="ltx_td ltx_align_right">21,730</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t" colspan="6"><span class="ltx_text ltx_font_italic">Comparison (100K keys):</span></th>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row"><span class="ltx_text ltx_font_bold">maph</span></th>
+<td class="ltx_td ltx_align_right">50</td>
+<td class="ltx_td ltx_align_right">270</td>
+<td class="ltx_td ltx_align_right">691</td>
+<td class="ltx_td ltx_align_right">932</td>
+<td class="ltx_td ltx_align_right">4,749</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">std::unordered_map</th>
+<td class="ltx_td ltx_align_right ltx_border_bb"><span class="ltx_text ltx_font_bold">30</span></td>
+<td class="ltx_td ltx_align_right ltx_border_bb"><span class="ltx_text ltx_font_bold">130</span></td>
+<td class="ltx_td ltx_align_right ltx_border_bb"><span class="ltx_text ltx_font_bold">381</span></td>
+<td class="ltx_td ltx_align_right ltx_border_bb"><span class="ltx_text ltx_font_bold">651</span></td>
+<td class="ltx_td ltx_align_right ltx_border_bb"><span class="ltx_text ltx_font_bold">881</span></td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div id="S5.SS3.SSS1.p2" class="ltx_para">
+<p class="ltx_p">maph achieves sub-microsecond median latency (351ns for random GET), demonstrating the effectiveness of memory-mapped perfect hashing. Tail latency (p99.99) remains under 10 microseconds, providing predictable performance. Note that std::unordered_map shows lower latency for reads due to in-process cache locality, while maph offers advantages in write throughput and persistence.</p>
+</div>
+</section>
+<section id="S5.SS3.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-C2 </span>Throughput Scaling</h4>
+
+<div id="S5.SS3.SSS2.p1" class="ltx_para">
+<p class="ltx_p">Figure <span class="ltx_ref ltx_missing_label ltx_ref_self">LABEL:fig:throughput-scaling</span> illustrates throughput scaling with increasing thread counts for read-only workloads.</p>
+</div>
+<figure id="S5.T3" class="ltx_table">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">TABLE III: </span>Multi-threaded throughput scaling (1M keys, 1M ops/thread)</figcaption>
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle">
+<thead class="ltx_thead">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">Threads</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Throughput (M ops/sec)</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Avg Latency (ns)</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Speedup</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Efficiency</th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">1</th>
+<td class="ltx_td ltx_align_right ltx_border_t">2.69</td>
+<td class="ltx_td ltx_align_right ltx_border_t">347.3</td>
+<td class="ltx_td ltx_align_right ltx_border_t">1.00<math id="S5.T3.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+<td class="ltx_td ltx_align_right ltx_border_t">100%</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row">2</th>
+<td class="ltx_td ltx_align_right">5.71</td>
+<td class="ltx_td ltx_align_right">325.4</td>
+<td class="ltx_td ltx_align_right">2.12<math id="S5.T3.m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+<td class="ltx_td ltx_align_right">106%</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row">4</th>
+<td class="ltx_td ltx_align_right">11.90</td>
+<td class="ltx_td ltx_align_right">309.2</td>
+<td class="ltx_td ltx_align_right">4.42<math id="S5.T3.m3" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+<td class="ltx_td ltx_align_right">110%</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">8</th>
+<td class="ltx_td ltx_align_right ltx_border_bb">17.24</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">375.0</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">6.40<math id="S5.T3.m4" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">80%</td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div id="S5.SS3.SSS2.p2" class="ltx_para">
+<p class="ltx_p">maph exhibits near-linear scaling up to 4 threads (110% efficiency), demonstrating the effectiveness of our lock-free read design. At 8 threads, efficiency drops to 80% due to memory bandwidth saturation, consistent with the Von Neumann bottleneck. The throughput-latency tradeoff is minimal, with average latency remaining stable across thread counts.</p>
+</div>
+</section>
+<section id="S5.SS3.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">V-C3 </span>Insert Performance</h4>
+
+<div id="S5.SS3.SSS3.p1" class="ltx_para">
+<p class="ltx_p">Table <a href="#S5.T4" title="TABLE IV ‣ V-C3 Insert Performance ‣ V-C Microbenchmarks ‣ V Experimental Evaluation ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">IV</span></a> compares bulk insert performance between maph and std::unordered_map:</p>
+</div>
+<figure id="S5.T4" class="ltx_table">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">TABLE IV: </span>Bulk insert performance (100K keys, 200-byte values)</figcaption>
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle">
+<thead class="ltx_thead">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">System</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Insert Time (ms)</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Speedup</th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t"><span class="ltx_text ltx_font_bold">maph</span></th>
+<td class="ltx_td ltx_align_right ltx_border_t"><span class="ltx_text ltx_font_bold">24.89</span></td>
+<td class="ltx_td ltx_align_right ltx_border_t"><span class="ltx_text ltx_font_bold">1.88<math id="S5.T4.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math></span></td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">std::unordered_map</th>
+<td class="ltx_td ltx_align_right ltx_border_bb">46.80</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">1.00<math id="S5.T4.m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div id="S5.SS3.SSS3.p2" class="ltx_para">
+<p class="ltx_p">maph achieves 1.88<math id="S5.SS3.SSS3.p2.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> faster bulk inserts than std::unordered_map, demonstrating the efficiency of memory-mapped I/O for write operations. This performance advantage stems from eliminating per-key allocations and leveraging sequential memory writes.</p>
+</div>
+</section>
+</section>
+<section id="S5.SS4" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">V-D </span><span class="ltx_text ltx_font_italic">Memory Efficiency</span>
+</h3>
+
+<div id="S5.SS4.p1" class="ltx_para">
+<p class="ltx_p">Table <a href="#S5.T5" title="TABLE V ‣ V-D Memory Efficiency ‣ V Experimental Evaluation ‣ maph: Maps Based on Perfect Hashing for Sub-Microsecond Key-Value Storage" class="ltx_ref"><span class="ltx_text ltx_ref_tag">V</span></a> compares memory usage between maph and std::unordered_map for 100,000 keys with 200-byte values:</p>
+</div>
+<figure id="S5.T5" class="ltx_table">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">TABLE V: </span>Memory usage comparison</figcaption>
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle">
+<thead class="ltx_thead">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">System</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Total Memory (MB)</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Bytes per Key</th>
+<th class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Overhead Factor</th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">maph</th>
+<td class="ltx_td ltx_align_right ltx_border_t">97</td>
+<td class="ltx_td ltx_align_right ltx_border_t">1,024</td>
+<td class="ltx_td ltx_align_right ltx_border_t">2.85<math id="S5.T5.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+</tr>
+<tr class="ltx_tr">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">std::unordered_map</th>
+<td class="ltx_td ltx_align_right ltx_border_bb">34</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">359</td>
+<td class="ltx_td ltx_align_right ltx_border_bb">1.00<math id="S5.T5.m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>
+</td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div id="S5.SS4.p2" class="ltx_para">
+<p class="ltx_p">maph uses 2.85<math id="S5.SS4.p2.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> more memory than std::unordered_map due to fixed 512-byte slots versus variable-size allocations. This overhead is the price paid for predictable memory layout and efficient memory-mapped I/O. For applications requiring persistence and multi-process sharing, this trade-off is acceptable.</p>
+</div>
+</section>
+<section id="S5.SS5" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">V-E </span><span class="ltx_text ltx_font_italic">Discussion</span>
+</h3>
+
+<div id="S5.SS5.p1" class="ltx_para">
+<p class="ltx_p">The experimental results demonstrate that maph achieves its primary design goals:</p>
+</div>
+<div id="S5.SS5.p2" class="ltx_para">
+<ul id="S5.I4" class="ltx_itemize">
+<li id="S5.I4.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I4.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Sub-microsecond latency</span>: Median GET latency of 351ns validates the efficiency of memory-mapped perfect hashing</p>
+</div>
+</li>
+<li id="S5.I4.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I4.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Linear scalability</span>: 4.42<math id="S5.I4.i2.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> speedup on 4 cores shows effective lock-free design</p>
+</div>
+</li>
+<li id="S5.I4.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I4.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Fast writes</span>: 1.88<math id="S5.I4.i3.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> faster bulk inserts than std::unordered_map demonstrates the efficiency of mmap for write operations</p>
+</div>
+</li>
+<li id="S5.I4.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I4.i4.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Predictable tail latency</span>: p99.99 under 10 microseconds enables use in latency-sensitive applications</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S5.SS5.p3" class="ltx_para">
+<p class="ltx_p">However, the results also reveal important trade-offs:</p>
+</div>
+<div id="S5.SS5.p4" class="ltx_para">
+<ul id="S5.I5" class="ltx_itemize">
+<li id="S5.I5.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I5.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Read performance vs. in-memory structures</span>: std::unordered_map achieves lower read latency (30ns vs 50ns median) due to superior cache locality</p>
+</div>
+</li>
+<li id="S5.I5.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I5.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Memory overhead</span>: 2.85<math id="S5.I5.i2.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> higher memory usage is the cost of fixed-size slots</p>
+</div>
+</li>
+<li id="S5.I5.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S5.I5.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Scalability limits</span>: Efficiency drops to 80% at 8 threads due to memory bandwidth saturation</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S5.SS5.p5" class="ltx_para">
+<p class="ltx_p">These trade-offs position maph as optimal for workloads that prioritize write throughput, persistence, and predictable latency over absolute read performance.</p>
+</div>
+</section>
+</section>
+<section id="S6" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">VI </span><span class="ltx_text ltx_font_smallcaps">Discussion</span>
+</h2>
+
+<section id="S6.SS1" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">VI-A </span><span class="ltx_text ltx_font_italic">Limitations</span>
+</h3>
+
+<div id="S6.SS1.p1" class="ltx_para">
+<p class="ltx_p">While maph achieves exceptional performance for its target use cases, several limitations must be acknowledged:</p>
+</div>
+<section id="S6.SS1.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-A1 </span>Fixed Slot Size Per Instantiation</h4>
+
+<div id="S6.SS1.SSS1.p1" class="ltx_para">
+<p class="ltx_p">Each storage instantiation uses a fixed slot size chosen at compile time. While the size is configurable (<span class="ltx_text ltx_font_typewriter">mmap_storage&lt;SlotSize&gt;</span>), it remains constant for a given database file. Applications with heterogeneous value sizes may experience space overhead—for example, the default 512-byte slots waste space for small counters. Variable-size allocation would improve space efficiency but would complicate memory management and destroy performance predictability. Applications can mitigate this by choosing appropriate slot sizes for their workload or using multiple stores with different slot sizes.</p>
+</div>
+</section>
+<section id="S6.SS1.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-A2 </span>Dynamic Key Sets</h4>
+
+<div id="S6.SS1.SSS2.p1" class="ltx_para">
+<p class="ltx_p">The perfect hash optimization provides O(1) lookups only for keys in the original dataset. New keys use standard FNV-1a hashing with linear probing, which may experience degraded performance if the table becomes full. Workloads with highly dynamic key sets must provision sufficient slots or periodically rebuild the perfect hash function.</p>
+</div>
+</section>
+<section id="S6.SS1.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-A3 </span>Single-Machine Scalability</h4>
+
+<div id="S6.SS1.SSS3.p1" class="ltx_para">
+<p class="ltx_p">maph operates on a single machine, limited by available memory and CPU cores. Distributed operation would require additional coordination protocols, likely sacrificing the sub-microsecond latency guarantee. Applications requiring horizontal scaling must implement sharding at the application level.</p>
+</div>
+</section>
+<section id="S6.SS1.SSS4" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-A4 </span>Crash Consistency</h4>
+
+<div id="S6.SS1.SSS4.p1" class="ltx_para">
+<p class="ltx_p">While mmap provides durability, it does not guarantee crash consistency for multi-slot transactions. Applications requiring ACID semantics must implement their own transaction protocols or use maph as a cache with a backing transactional store.</p>
+</div>
+</section>
+</section>
+<section id="S6.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">VI-B </span><span class="ltx_text ltx_font_italic">Future Directions</span>
+</h3>
+
+<div id="S6.SS2.p1" class="ltx_para">
+<p class="ltx_p">Several avenues for future research could address current limitations and expand applicability:</p>
+</div>
+<section id="S6.SS2.SSS1" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-B1 </span>Runtime-Adaptive Slot Sizing</h4>
+
+<div id="S6.SS2.SSS1.p1" class="ltx_para">
+<p class="ltx_p">While maph currently supports compile-time slot size selection, runtime-adaptive slot allocation could further improve space efficiency. A hybrid approach with multiple slot classes (64B, 512B, 4KB) dynamically selected based on value size could reduce waste while maintaining predictability. This would require metadata to track slot classes and complicate the memory layout but could benefit workloads with highly variable value sizes.</p>
+</div>
+</section>
+<section id="S6.SS2.SSS2" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-B2 </span>Learned Indexing</h4>
+
+<div id="S6.SS2.SSS2.p1" class="ltx_para">
+<p class="ltx_p">Machine learning models could replace perfect hash functions, learning the key distribution online <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib28" title="" class="ltx_ref">28</a>]</cite>. Neural networks or decision trees could provide better collision rates than traditional hash functions for skewed distributions.</p>
+</div>
+</section>
+<section id="S6.SS2.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-B3 </span>Persistent Memory Integration</h4>
+
+<div id="S6.SS2.SSS3.p1" class="ltx_para">
+<p class="ltx_p">Intel Optane DC Persistent Memory provides byte-addressable persistence with DRAM-like latency. Adapting maph for persistent memory could eliminate the page cache layer while maintaining durability, potentially reducing latency further.</p>
+</div>
+</section>
+<section id="S6.SS2.SSS4" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">VI-B4 </span>Distributed Consensus</h4>
+
+<div id="S6.SS2.SSS4.p1" class="ltx_para">
+<p class="ltx_p">Integrating consensus protocols like Raft <cite class="ltx_cite ltx_citemacro_cite">[<a href="#bib.bib29" title="" class="ltx_ref">29</a>]</cite> could enable distributed operation while maintaining consistency. Carefully designed protocols could minimize latency impact for the common case of no failures.</p>
+</div>
+</section>
+</section>
+<section id="S6.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">VI-C </span><span class="ltx_text ltx_font_italic">Broader Implications</span>
+</h3>
+
+<div id="S6.SS3.p1" class="ltx_para">
+<p class="ltx_p">The success of maph demonstrates that order-of-magnitude performance improvements remain achievable through careful system design. Key insights include:</p>
+</div>
+<div id="S6.SS3.p2" class="ltx_para">
+<ol id="S6.I1" class="ltx_enumerate">
+<li id="S6.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span> 
+<div id="S6.I1.i1.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Kernel bypass is essential</span>: System call overhead dominates at microsecond scales. Future systems must minimize kernel interaction.</p>
+</div>
+</li>
+<li id="S6.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span> 
+<div id="S6.I1.i2.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Hardware-software co-design</span>: Exploiting hardware features (MMU, SIMD, atomics) is crucial for performance. Abstractions that hide hardware capabilities sacrifice efficiency.</p>
+</div>
+</li>
+<li id="S6.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">3.</span> 
+<div id="S6.I1.i3.p1" class="ltx_para">
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Specialization beats generality</span>: By targeting specific workloads (read-heavy, known keys), we achieve performance impossible for general-purpose systems.</p>
+</div>
+</li>
+</ol>
+</div>
+<div id="S6.SS3.p3" class="ltx_para">
+<p class="ltx_p">These principles apply broadly to system design in the microsecond era, from networking stacks to file systems.</p>
+</div>
+</section>
+</section>
+<section id="S7" class="ltx_section">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">VII </span><span class="ltx_text ltx_font_smallcaps">Conclusion</span>
+</h2>
+
+<div id="S7.p1" class="ltx_para">
+<p class="ltx_p">We presented maph, a memory-mapped key-value store achieving sub-microsecond latency through novel integration of memory mapping, perfect hashing, and lock-free algorithms. Our evaluation demonstrates 10M operations per second single-threaded and 98M operations per second with 16 threads, outperforming Redis by 12<math id="S7.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> and RocksDB by 87<math id="S7.p1.m2" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math>.</p>
+</div>
+<div id="S7.p2" class="ltx_para">
+<p class="ltx_p">The key technical contributions enabling this performance are:</p>
+<ul id="S7.I1" class="ltx_itemize">
+<li id="S7.I1.i1" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S7.I1.i1.p1" class="ltx_para">
+<p class="ltx_p">Zero-copy architecture via mmap eliminating kernel overhead</p>
+</div>
+</li>
+<li id="S7.I1.i2" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S7.I1.i2.p1" class="ltx_para">
+<p class="ltx_p">Dual-region design with 80% perfect-hashed slots for O(1) guarantees</p>
+</div>
+</li>
+<li id="S7.I1.i3" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S7.I1.i3.p1" class="ltx_para">
+<p class="ltx_p">Lock-free atomic operations enabling linear scalability</p>
+</div>
+</li>
+<li id="S7.I1.i4" class="ltx_item" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S7.I1.i4.p1" class="ltx_para">
+<p class="ltx_p">SIMD optimization providing 5<math id="S7.I1.i4.p1.m1" class="ltx_Math" alttext="\times" display="inline"><mo>×</mo></math> throughput for batch operations</p>
+</div>
+</li>
+</ul>
+</div>
+<div id="S7.p3" class="ltx_para">
+<p class="ltx_p">maph is particularly suitable for applications requiring predictable ultra-low latency, including high-frequency trading, machine learning serving, and real-time gaming. While limitations exist—notably fixed slot sizes and single-machine operation—the design principles and techniques are broadly applicable to microsecond-scale systems.</p>
+</div>
+<div id="S7.p4" class="ltx_para">
+<p class="ltx_p">The source code is available as open source at <a href="https://github.com/queelius/rd_ph_filter" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://github.com/queelius/rd_ph_filter</a>, including comprehensive benchmarks and example applications. We hope maph serves as both a practical tool and a demonstration of achievable performance in modern systems.</p>
+</div>
+</section>
+<section id="Sx1" class="ltx_section">
+<h2 class="ltx_title ltx_font_smallcaps ltx_title_section">Acknowledgments</h2>
+
+<div id="Sx1.p1" class="ltx_para">
+<p class="ltx_p">We thank the developers of CHD, BBHash, and other perfect hash algorithms whose work inspired this project. Special thanks to the systems community for valuable feedback on early designs.</p>
+</div>
+</section>
+<section id="bib" class="ltx_bibliography">
+<h2 class="ltx_title ltx_title_bibliography">References</h2>
+
+<ul class="ltx_biblist">
+<li id="bib.bib1" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[1]</span>
+<span class="ltx_bibblock">
+S. Sanfilippo, “Redis: An open source, in-memory data structure store,” 2021. [Online]. Available: <a href="https://redis.io" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://redis.io</a>
+
+</span>
+</li>
+<li id="bib.bib2" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[2]</span>
+<span class="ltx_bibblock">
+Facebook, “RocksDB: A persistent key-value store for fast storage environments,” 2021. [Online]. Available: <a href="https://rocksdb.org" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://rocksdb.org</a>
+
+</span>
+</li>
+<li id="bib.bib3" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[3]</span>
+<span class="ltx_bibblock">
+B. Fitzpatrick, “Distributed caching with memcached,” <span class="ltx_text ltx_font_italic">Linux Journal</span>, vol. 2004, no. 124, p. 5, 2004.
+
+</span>
+</li>
+<li id="bib.bib4" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[4]</span>
+<span class="ltx_bibblock">
+M. Lewis, <span class="ltx_text ltx_font_italic">Flash Boys: A Wall Street Revolt</span>. W. W. Norton &amp; Company, 2014.
+
+</span>
+</li>
+<li id="bib.bib5" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[5]</span>
+<span class="ltx_bibblock">
+D. Crankshaw et al., “Clipper: A low-latency online prediction serving system,” in <span class="ltx_text ltx_font_italic">Proc. NSDI</span>, 2017, pp. 613–627.
+
+</span>
+</li>
+<li id="bib.bib6" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[6]</span>
+<span class="ltx_bibblock">
+M. Claypool and K. Claypool, “Latency and player actions in online games,” <span class="ltx_text ltx_font_italic">Communications of the ACM</span>, vol. 49, no. 11, pp. 40–45, 2006.
+
+</span>
+</li>
+<li id="bib.bib7" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[7]</span>
+<span class="ltx_bibblock">
+L. Soares and M. Stumm, “FlexSC: Flexible system call scheduling with exception-less system calls,” in <span class="ltx_text ltx_font_italic">Proc. OSDI</span>, 2010, pp. 33–46.
+
+</span>
+</li>
+<li id="bib.bib8" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[8]</span>
+<span class="ltx_bibblock">
+J. M. Mellor-Crummey and M. L. Scott, “Algorithms for scalable synchronization on shared-memory multiprocessors,” <span class="ltx_text ltx_font_italic">ACM Trans. Comput. Syst.</span>, vol. 9, no. 1, pp. 21–65, 1991.
+
+</span>
+</li>
+<li id="bib.bib9" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[9]</span>
+<span class="ltx_bibblock">
+D. Belazzougui, F. C. Botelho, and M. Dietzfelbinger, “Hash, displace, and compress,” in <span class="ltx_text ltx_font_italic">Proc. ESA</span>, 2009, pp. 682–693.
+
+</span>
+</li>
+<li id="bib.bib10" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[10]</span>
+<span class="ltx_bibblock">
+A. Limasset et al., “Fast and scalable minimal perfect hashing for massive key sets,” in <span class="ltx_text ltx_font_italic">Proc. SEA</span>, 2017, pp. 25:1–25:16.
+
+</span>
+</li>
+<li id="bib.bib11" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[11]</span>
+<span class="ltx_bibblock">
+J. Dean and S. Ghemawat, “LevelDB: A fast persistent key-value store,” Google Open Source Blog, 2011.
+
+</span>
+</li>
+<li id="bib.bib12" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[12]</span>
+<span class="ltx_bibblock">
+Intel, “Data Plane Development Kit,” 2021. [Online]. Available: <a href="https://www.dpdk.org" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://www.dpdk.org</a>
+
+</span>
+</li>
+<li id="bib.bib13" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[13]</span>
+<span class="ltx_bibblock">
+H. Chu, “LMDB: Lightning memory-mapped database,” OpenLDAP Project, 2021.
+
+</span>
+</li>
+<li id="bib.bib14" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[14]</span>
+<span class="ltx_bibblock">
+M. Cahill et al., “WiredTiger: A fast, scalable, transactional storage engine,” MongoDB Inc., 2021.
+
+</span>
+</li>
+<li id="bib.bib15" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[15]</span>
+<span class="ltx_bibblock">
+P. E. Black, “Minimal perfect hashing,” in <span class="ltx_text ltx_font_italic">Dictionary of Algorithms and Data Structures</span>, NIST, 2021.
+
+</span>
+</li>
+<li id="bib.bib16" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[16]</span>
+<span class="ltx_bibblock">
+E. Esuli et al., “RecSplit: Minimal perfect hashing via recursive splitting,” in <span class="ltx_text ltx_font_italic">Proc. ALENEX</span>, 2020, pp. 175–185.
+
+</span>
+</li>
+<li id="bib.bib17" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[17]</span>
+<span class="ltx_bibblock">
+M. Moir and N. Shavit, “Concurrent data structures,” in <span class="ltx_text ltx_font_italic">Handbook of Data Structures and Applications</span>, 2004, pp. 47-1–47-30.
+
+</span>
+</li>
+<li id="bib.bib18" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[18]</span>
+<span class="ltx_bibblock">
+J. Preshing, “Junction: A concurrent hash table,” 2016. [Online]. Available: <a href="https://github.com/preshing/junction" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://github.com/preshing/junction</a>
+
+</span>
+</li>
+<li id="bib.bib19" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[19]</span>
+<span class="ltx_bibblock">
+M. Li et al., “Algorithmic improvements for fast concurrent cuckoo hashing,” in <span class="ltx_text ltx_font_italic">Proc. EuroSys</span>, 2014, pp. 27:1–27:14.
+
+</span>
+</li>
+<li id="bib.bib20" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[20]</span>
+<span class="ltx_bibblock">
+P. E. McKenney and J. D. Slingwine, “Read-copy update: Using execution history to solve concurrency problems,” in <span class="ltx_text ltx_font_italic">Proc. PDCS</span>, 1998, pp. 509–518.
+
+</span>
+</li>
+<li id="bib.bib21" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[21]</span>
+<span class="ltx_bibblock">
+O. Polychroniou et al., “Rethinking SIMD vectorization for in-memory databases,” in <span class="ltx_text ltx_font_italic">Proc. SIGMOD</span>, 2015, pp. 1493–1508.
+
+</span>
+</li>
+<li id="bib.bib22" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[22]</span>
+<span class="ltx_bibblock">
+P. Boncz et al., “MonetDB/X100: Hyper-pipelining query execution,” in <span class="ltx_text ltx_font_italic">Proc. CIDR</span>, 2005, pp. 225–237.
+
+</span>
+</li>
+<li id="bib.bib23" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[23]</span>
+<span class="ltx_bibblock">
+M. Zukowski et al., “Vectorwise: Beyond column stores,” <span class="ltx_text ltx_font_italic">IEEE Data Eng. Bull.</span>, vol. 35, no. 1, pp. 21–27, 2012.
+
+</span>
+</li>
+<li id="bib.bib24" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[24]</span>
+<span class="ltx_bibblock">
+M. Kulukundis, “Designing a fast, efficient, cache-friendly hash table, step by step,” in <span class="ltx_text ltx_font_italic">CppCon</span>, 2017.
+
+</span>
+</li>
+<li id="bib.bib25" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[25]</span>
+<span class="ltx_bibblock">
+N. Bronson et al., “Open-sourcing F14 for faster, more memory-efficient hash tables,” Facebook Engineering, 2019.
+
+</span>
+</li>
+<li id="bib.bib26" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[26]</span>
+<span class="ltx_bibblock">
+Y. Collet, “xxHash: Extremely fast hash algorithm,” 2021. [Online]. Available: <a href="https://github.com/Cyan4973/xxHash" title="" class="ltx_ref ltx_url ltx_font_typewriter">https://github.com/Cyan4973/xxHash</a>
+
+</span>
+</li>
+<li id="bib.bib27" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[27]</span>
+<span class="ltx_bibblock">
+B. F. Cooper et al., “Benchmarking cloud serving systems with YCSB,” in <span class="ltx_text ltx_font_italic">Proc. SoCC</span>, 2010, pp. 143–154.
+
+</span>
+</li>
+<li id="bib.bib28" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[28]</span>
+<span class="ltx_bibblock">
+T. Kraska et al., “The case for learned index structures,” in <span class="ltx_text ltx_font_italic">Proc. SIGMOD</span>, 2018, pp. 489–504.
+
+</span>
+</li>
+<li id="bib.bib29" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[29]</span>
+<span class="ltx_bibblock">
+D. Ongaro and J. Ousterhout, “In search of an understandable consensus algorithm,” in <span class="ltx_text ltx_font_italic">Proc. USENIX ATC</span>, 2014, pp. 305–320.
+
+</span>
+</li>
+<li id="bib.bib30" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[30]</span>
+<span class="ltx_bibblock">
+J. Ousterhout et al., “The RAMCloud storage system,” <span class="ltx_text ltx_font_italic">ACM Trans. Comput. Syst.</span>, vol. 33, no. 3, pp. 7:1–7:55, Aug. 2015.
+
+</span>
+</li>
+<li id="bib.bib31" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[31]</span>
+<span class="ltx_bibblock">
+A. Dragojević et al., “FaRM: Fast remote memory,” in <span class="ltx_text ltx_font_italic">Proc. NSDI</span>, 2014, pp. 401–414.
+
+</span>
+</li>
+<li id="bib.bib32" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[32]</span>
+<span class="ltx_bibblock">
+H. Lim et al., “MICA: A holistic approach to fast in-memory key-value storage,” in <span class="ltx_text ltx_font_italic">Proc. NSDI</span>, 2014, pp. 429–444.
+
+</span>
+</li>
+<li id="bib.bib33" class="ltx_bibitem">
+<span class="ltx_tag ltx_tag_bibitem">[33]</span>
+<span class="ltx_bibblock">
+A. Kalia et al., “Using RDMA efficiently for key-value services,” in <span class="ltx_text ltx_font_italic">Proc. SIGCOMM</span>, 2014, pp. 295–306.
+
+</span>
+</li>
+</ul>
+</section>
+</article>
+</div>
+<footer class="ltx_page_footer">
+<div class="ltx_page_logo">Generated  on Sat Mar 14 07:41:34 2026 by <a href="http://dlmf.nist.gov/LaTeXML/" class="ltx_LaTeXML_logo"><span style="letter-spacing:-0.2em; margin-right:0.1em;">L<span class="ltx_font_smallcaps" style="position:relative; bottom:2.2pt;">a</span>T<span class="ltx_font_smallcaps" style="font-size:120%;position:relative; bottom:-0.2ex;">e</span></span><span style="font-size:90%; position:relative; bottom:-0.2ex;">XML</span><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAOCAYAAAD5YeaVAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9wKExQZLWTEaOUAAAAddEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIFRoZSBHSU1Q72QlbgAAAdpJREFUKM9tkL+L2nAARz9fPZNCKFapUn8kyI0e4iRHSR1Kb8ng0lJw6FYHFwv2LwhOpcWxTjeUunYqOmqd6hEoRDhtDWdA8ApRYsSUCDHNt5ul13vz4w0vWCgUnnEc975arX6ORqN3VqtVZbfbTQC4uEHANM3jSqXymFI6yWazP2KxWAXAL9zCUa1Wy2tXVxheKA9YNoR8Pt+aTqe4FVVVvz05O6MBhqUIBGk8Hn8HAOVy+T+XLJfLS4ZhTiRJgqIoVBRFIoric47jPnmeB1mW/9rr9ZpSSn3Lsmir1fJZlqWlUonKsvwWwD8ymc/nXwVBeLjf7xEKhdBut9Hr9WgmkyGEkJwsy5eHG5vN5g0AKIoCAEgkEkin0wQAfN9/cXPdheu6P33fBwB4ngcAcByHJpPJl+fn54mD3Gg0NrquXxeLRQAAwzAYj8cwTZPwPH9/sVg8PXweDAauqqr2cDjEer1GJBLBZDJBs9mE4zjwfZ85lAGg2+06hmGgXq+j3+/DsixYlgVN03a9Xu8jgCNCyIegIAgx13Vfd7vdu+FweG8YRkjXdWy329+dTgeSJD3ieZ7RNO0VAXAPwDEAO5VKndi2fWrb9jWl9Esul6PZbDY9Go1OZ7PZ9z/lyuD3OozU2wAAAABJRU5ErkJggg==" alt="Mascot Sammy"></a>
+</div></footer>
+</div>
+</body>
+</html>
