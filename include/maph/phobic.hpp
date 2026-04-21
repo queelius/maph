@@ -128,57 +128,38 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& val) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(val)>>(val);
-            out.insert(out.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::write_header(out, ALGORITHM_ID);
 
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-        append(seed_);
-        append(static_cast<uint64_t>(num_keys_));
-        append(static_cast<uint64_t>(range_size_));
-        append(static_cast<uint64_t>(num_buckets_));
-        append(static_cast<uint64_t>(BucketSize));
+        phf_serial::append(out, seed_);
+        phf_serial::append(out, static_cast<uint64_t>(num_keys_));
+        phf_serial::append(out, static_cast<uint64_t>(range_size_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        phf_serial::append(out, static_cast<uint64_t>(BucketSize));
 
-        append(static_cast<uint64_t>(pilots_.size()));
-        for (auto p : pilots_) append(p);
-
+        phf_serial::append_vector(out, pilots_);
         return out;
     }
 
     [[nodiscard]] static result<phobic_phf> deserialize(std::span<const std::byte> data) {
-        size_t off = 0;
-        auto read = [&](auto& val) -> bool {
-            if (off + sizeof(val) > data.size()) return false;
-            std::memcpy(&val, data.data() + off, sizeof(val));
-            off += sizeof(val);
-            return true;
-        };
+        phf_serial::reader rd(data);
 
-        uint32_t magic{}, version{}, algo{};
-        if (!read(magic) || magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
-        if (!read(version) || version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
-        if (!read(algo) || algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
+        if (!phf_serial::verify_header(rd, ALGORITHM_ID)) {
+            return std::unexpected(error::invalid_format);
+        }
 
         uint64_t seed{}, nkeys{}, rsize{}, nbuckets{}, bsize{};
-        if (!read(seed) || !read(nkeys) || !read(rsize) || !read(nbuckets) || !read(bsize))
+        if (!rd.read(seed) || !rd.read(nkeys) || !rd.read(rsize) ||
+            !rd.read(nbuckets) || !rd.read(bsize)) {
             return std::unexpected(error::invalid_format);
+        }
         if (bsize != BucketSize) return std::unexpected(error::invalid_format);
-
-        uint64_t pilot_count{};
-        if (!read(pilot_count) || pilot_count > data.size() - off)
-            return std::unexpected(error::invalid_format);
 
         phobic_phf r;
         r.seed_ = seed;
         r.num_keys_ = static_cast<size_t>(nkeys);
         r.range_size_ = static_cast<size_t>(rsize);
         r.num_buckets_ = static_cast<size_t>(nbuckets);
-        r.pilots_.resize(static_cast<size_t>(pilot_count));
-        for (auto& p : r.pilots_) { if (!read(p)) return std::unexpected(error::invalid_format); }
-
+        if (!rd.read_vector(r.pilots_)) return std::unexpected(error::invalid_format);
         return r;
     }
 

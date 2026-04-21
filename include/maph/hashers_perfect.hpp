@@ -40,6 +40,131 @@ static_assert(std::endian::native == std::endian::little,
 // from crafted input. 2^40 elements (~1 trillion) is generous but bounded.
 constexpr uint64_t MAX_SERIALIZED_ELEMENT_COUNT = 1ULL << 40;
 
+// ===== SHARED SERIALIZATION HELPERS =====
+//
+// Small append/read primitives shared by all PHF algorithms. They encode
+// counts as uint64_t for 32/64-bit portability and enforce a bound on
+// element counts to prevent OOM from crafted input.
+
+namespace phf_serial {
+
+/// Append a trivially-copyable value to the byte buffer.
+template<typename T>
+inline void append(std::vector<std::byte>& buf, const T& value) {
+    auto bytes = std::bit_cast<std::array<std::byte, sizeof(T)>>(value);
+    buf.insert(buf.end(), bytes.begin(), bytes.end());
+}
+
+/// Append a vector with length prefix. Values of type U (or convertible)
+/// are written with one append call per element; the count is a uint64_t.
+template<typename Vec>
+inline void append_vector(std::vector<std::byte>& buf, const Vec& v) {
+    append(buf, static_cast<uint64_t>(v.size()));
+    for (const auto& e : v) append(buf, e);
+}
+
+/// Append a size_t vector, widening each element to uint64_t for portability.
+inline void append_vector_size(std::vector<std::byte>& buf,
+                               const std::vector<size_t>& v) {
+    append(buf, static_cast<uint64_t>(v.size()));
+    for (auto e : v) append(buf, static_cast<uint64_t>(e));
+}
+
+/// Bounded stream reader over a byte span. Tracks offset, returns false
+/// on any short read; never throws.
+class reader {
+    std::span<const std::byte> data_;
+    size_t off_{0};
+public:
+    explicit reader(std::span<const std::byte> d) noexcept : data_(d) {}
+
+    size_t remaining() const noexcept { return data_.size() - off_; }
+
+    template<typename T>
+    [[nodiscard]] bool read(T& out) noexcept {
+        if (off_ + sizeof(T) > data_.size()) return false;
+        std::memcpy(&out, data_.data() + off_, sizeof(T));
+        off_ += sizeof(T);
+        return true;
+    }
+
+    /// Read a length-prefixed vector of fixed-size T elements.
+    template<typename T>
+    [[nodiscard]] bool read_vector(std::vector<T>& out) noexcept {
+        uint64_t count{};
+        if (!read(count) || count > MAX_SERIALIZED_ELEMENT_COUNT) return false;
+        auto n = static_cast<size_t>(count);
+        if (n > remaining() / sizeof(T)) return false;
+        out.resize(n);
+        for (auto& e : out) { if (!read(e)) return false; }
+        return true;
+    }
+
+    /// Read a length-prefixed vector of uint64_t and narrow each to size_t.
+    [[nodiscard]] bool read_vector_size(std::vector<size_t>& out) noexcept {
+        uint64_t count{};
+        if (!read(count) || count > MAX_SERIALIZED_ELEMENT_COUNT) return false;
+        auto n = static_cast<size_t>(count);
+        if (n > remaining() / sizeof(uint64_t)) return false;
+        out.resize(n);
+        for (auto& e : out) {
+            uint64_t v{};
+            if (!read(v)) return false;
+            e = static_cast<size_t>(v);
+        }
+        return true;
+    }
+};
+
+/// Verify the standard header (magic + version + algorithm id). Optionally
+/// reads an additional trailing uint32_t (e.g. LeafSize, NumLevels, AlphaInt)
+/// that parameterizes the algorithm. Returns true on match.
+inline bool verify_header(reader& r, uint32_t expected_algo,
+                          std::optional<uint32_t> expected_param = std::nullopt) {
+    uint32_t magic{}, version{}, algo{};
+    if (!r.read(magic) || magic != PERFECT_HASH_MAGIC) return false;
+    if (!r.read(version) || version != PERFECT_HASH_VERSION) return false;
+    if (!r.read(algo) || algo != expected_algo) return false;
+    if (expected_param) {
+        uint32_t param{};
+        if (!r.read(param) || param != *expected_param) return false;
+    }
+    return true;
+}
+
+/// Write the standard header. The param (if provided) is written as uint32_t.
+inline void write_header(std::vector<std::byte>& buf, uint32_t algo,
+                         std::optional<uint32_t> param = std::nullopt) {
+    append(buf, PERFECT_HASH_MAGIC);
+    append(buf, PERFECT_HASH_VERSION);
+    append(buf, algo);
+    if (param) append(buf, *param);
+}
+
+}  // namespace phf_serial
+
+// ===== SHARED HASH PRIMITIVES =====
+//
+// The splitmix64 finalizer and FNV-1a-with-seed are used identically by
+// several algorithms. Factored out to avoid duplication.
+
+/// SplitMix64 final mixer — strong avalanche in a few cycles.
+[[nodiscard]] inline constexpr uint64_t phf_remix(uint64_t z) noexcept {
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+/// FNV-1a over the key bytes starting from `seed`, finalized with splitmix64.
+[[nodiscard]] inline uint64_t phf_hash_with_seed(std::string_view key, uint64_t seed) noexcept {
+    uint64_t h = seed;
+    for (unsigned char c : key) {
+        h ^= c;
+        h *= 0x100000001b3ULL;  // FNV prime
+    }
+    return phf_remix(h);
+}
+
 // ===== RECSPLIT PERFECT HASH =====
 
 /**
@@ -90,26 +215,9 @@ private:
         bucket_offsets_.resize(num_buckets_ + 1, 0);
     }
 
-    // Remix function for hash distribution
-    [[nodiscard]] static constexpr uint64_t remix(uint64_t z) noexcept {
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-        return z ^ (z >> 31);
-    }
-
-    // Hash a string with a given seed
-    [[nodiscard]] uint64_t hash_with_seed(std::string_view key, uint64_t seed) const noexcept {
-        uint64_t h = seed;
-        for (unsigned char c : key) {
-            h ^= c;
-            h *= 0x100000001b3ULL;  // FNV prime
-        }
-        return remix(h);
-    }
-
     // Determine which bucket a key belongs to
     [[nodiscard]] size_t bucket_for_key(std::string_view key) const noexcept {
-        return hash_with_seed(key, base_seed_) % num_buckets_;
+        return phf_hash_with_seed(key, base_seed_) % num_buckets_;
     }
 
     // Hash within a bucket using the bucket's split value
@@ -118,7 +226,7 @@ private:
 
         uint64_t split = buckets_[bucket_idx].split;
         uint64_t bucket_seed = base_seed_ ^ (bucket_idx * 0x9e3779b97f4a7c15ULL) ^ (split * 0xbf58476d1ce4e5b9ULL);
-        return hash_with_seed(key, bucket_seed) % buckets_[bucket_idx].num_keys;
+        return phf_hash_with_seed(key, bucket_seed) % buckets_[bucket_idx].num_keys;
     }
 
 public:
@@ -164,153 +272,57 @@ public:
 
     // Serialization
     [[nodiscard]] std::vector<std::byte> serialize() const {
-        std::vector<std::byte> result;
+        std::vector<std::byte> out;
+        phf_serial::write_header(out, ALGORITHM_ID, static_cast<uint32_t>(LeafSize));
 
-        // Helper to append fixed-width values
-        auto append = [&](const auto& value) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
-            result.insert(result.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::append(out, static_cast<uint64_t>(key_count_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        phf_serial::append(out, base_seed_);
 
-        // Always serialize counts as uint64_t for 32/64-bit portability
-        auto append_u64 = [&](uint64_t value) { append(value); };
-
-        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) {
-                append(v);
-            }
-        };
-
-        // Header: magic + version + algorithm
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-        append(static_cast<uint32_t>(LeafSize));
-
-        // Core data (all as uint64_t for portability)
-        append_u64(static_cast<uint64_t>(key_count_));
-        append_u64(static_cast<uint64_t>(num_buckets_));
-        append(base_seed_);
-
-        // Buckets
-        append_u64(static_cast<uint64_t>(buckets_.size()));
+        phf_serial::append(out, static_cast<uint64_t>(buckets_.size()));
         for (const auto& b : buckets_) {
-            append(b.split);
-            append_u64(static_cast<uint64_t>(b.num_keys));
+            phf_serial::append(out, b.split);
+            phf_serial::append(out, static_cast<uint64_t>(b.num_keys));
         }
 
-        // Offsets
-        append_vector_u64(bucket_offsets_);
-
-        return result;
+        phf_serial::append_vector(out, bucket_offsets_);
+        return out;
     }
 
     [[nodiscard]] static result<recsplit_hasher> deserialize(std::span<const std::byte> data) {
-        size_t offset = 0;
+        phf_serial::reader r(data);
 
-        auto read_bytes = [&](void* out, size_t n) -> bool {
-            if (offset + n > data.size()) return false;
-            std::memcpy(out, data.data() + offset, n);
-            offset += n;
-            return true;
-        };
-
-        auto read_u16 = [&]() -> std::optional<uint16_t> {
-            uint16_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u32 = [&]() -> std::optional<uint32_t> {
-            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u64 = [&]() -> std::optional<uint64_t> {
-            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-
-        // Bounds-checked vector deserialization
-        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            // Sanity: count * 8 bytes must fit in remaining data
-            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
-            std::vector<uint64_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u64();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        // Verify header
-        auto magic = read_u32();
-        if (!magic || *magic != PERFECT_HASH_MAGIC) {
+        if (!phf_serial::verify_header(r, ALGORITHM_ID, static_cast<uint32_t>(LeafSize))) {
             return std::unexpected(error::invalid_format);
         }
 
-        auto version = read_u32();
-        if (!version || *version != PERFECT_HASH_VERSION) {
+        uint64_t key_count_u64{}, num_buckets_u64{}, base_seed{};
+        if (!r.read(key_count_u64) || !r.read(num_buckets_u64) || !r.read(base_seed)) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
 
-        auto algo = read_u32();
-        if (!algo || *algo != ALGORITHM_ID) {
+        recsplit_hasher hasher(static_cast<size_t>(key_count_u64), base_seed);
+        hasher.num_buckets_ = static_cast<size_t>(num_buckets_u64);
+
+        uint64_t bucket_count{};
+        if (!r.read(bucket_count) || bucket_count > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
-
-        auto leaf_size = read_u32();
-        if (!leaf_size || *leaf_size != LeafSize) {
-            return std::unexpected(error::invalid_format);
-        }
-
-        // Read core data (all as uint64_t)
-        auto key_count_u64 = read_u64();
-        auto num_buckets_u64 = read_u64();
-        auto base_seed = read_u64();
-
-        if (!key_count_u64 || !num_buckets_u64 || !base_seed) {
-            return std::unexpected(error::invalid_format);
-        }
-
-        // Bounds check on key_count
-        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
-            return std::unexpected(error::invalid_format);
-        }
-
-        auto key_count = static_cast<size_t>(*key_count_u64);
-        auto num_buckets = static_cast<size_t>(*num_buckets_u64);
-
-        // Create hasher with reconstructed data
-        recsplit_hasher hasher(key_count, *base_seed);
-        hasher.num_buckets_ = num_buckets;
-
-        // Read buckets
-        auto bucket_count_u64 = read_u64();
-        if (!bucket_count_u64 || *bucket_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
-            return std::unexpected(error::invalid_format);
-        }
-        auto bucket_count = static_cast<size_t>(*bucket_count_u64);
-        hasher.buckets_.resize(bucket_count);
-        for (size_t i = 0; i < bucket_count; ++i) {
-            auto split = read_u16();
-            auto num_keys_u64 = read_u64();
-            if (!split || !num_keys_u64) {
+        hasher.buckets_.resize(static_cast<size_t>(bucket_count));
+        for (auto& b : hasher.buckets_) {
+            uint64_t num_keys{};
+            if (!r.read(b.split) || !r.read(num_keys)) {
                 return std::unexpected(error::invalid_format);
             }
-            hasher.buckets_[i].split = *split;
-            hasher.buckets_[i].num_keys = static_cast<size_t>(*num_keys_u64);
+            b.num_keys = static_cast<size_t>(num_keys);
         }
 
-        // Read vectors
-        auto bucket_offsets = read_vector_u64();
-
-        if (!bucket_offsets) {
+        if (!r.read_vector(hasher.bucket_offsets_)) {
             return std::unexpected(error::invalid_format);
         }
-
-        hasher.bucket_offsets_ = std::move(*bucket_offsets);
-
         return hasher;
     }
 
@@ -384,7 +396,7 @@ public:
                 auto test_slot_in_bucket = [&](std::string_view key) -> size_t {
                     if (keys_in_bucket.size() == 0) return 0;
                     uint64_t bucket_seed = hasher.base_seed_ ^ (bucket_idx * 0x9e3779b97f4a7c15ULL) ^ (split * 0xbf58476d1ce4e5b9ULL);
-                    return hasher.hash_with_seed(key, bucket_seed) % keys_in_bucket.size();
+                    return phf_hash_with_seed(key, bucket_seed) % keys_in_bucket.size();
                 };
 
                 for (const auto& key : keys_in_bucket) {
@@ -521,31 +533,14 @@ private:
     double lambda_{5.0};    // Average bucket size
     uint64_t seed_{0};
 
-    // Remix function for hash distribution
-    [[nodiscard]] static constexpr uint64_t remix(uint64_t z) noexcept {
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-        return z ^ (z >> 31);
-    }
-
-    // Hash a string with a given seed
-    [[nodiscard]] uint64_t hash_with_seed(std::string_view key, uint64_t seed) const noexcept {
-        uint64_t h = seed;
-        for (unsigned char c : key) {
-            h ^= c;
-            h *= 0x100000001b3ULL;
-        }
-        return remix(h);
-    }
-
     // First hash: determines bucket
     [[nodiscard]] size_t bucket_hash(std::string_view key) const noexcept {
-        return hash_with_seed(key, seed_) % num_buckets_;
+        return phf_hash_with_seed(key, seed_) % num_buckets_;
     }
 
     // Second hash: determines slot within table given displacement
     [[nodiscard]] size_t slot_hash(std::string_view key, uint32_t displacement) const noexcept {
-        return (hash_with_seed(key, seed_ ^ 0xCAFEBABE12345678ULL) + displacement) % table_size_;
+        return (phf_hash_with_seed(key, seed_ ^ 0xCAFEBABE12345678ULL) + displacement) % table_size_;
     }
 
     explicit chd_hasher(size_t key_count, double lambda, uint64_t seed)
@@ -606,138 +601,44 @@ public:
     static constexpr uint32_t ALGORITHM_ID = 2;  // CHD
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
-        std::vector<std::byte> result;
+        std::vector<std::byte> out;
+        phf_serial::write_header(out, ALGORITHM_ID);
 
-        auto append = [&](const auto& value) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
-            result.insert(result.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::append(out, static_cast<uint64_t>(key_count_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        phf_serial::append(out, static_cast<uint64_t>(table_size_));
+        phf_serial::append(out, lambda_);
+        phf_serial::append(out, seed_);
 
-        auto append_u64 = [&](uint64_t value) { append(value); };
-
-        auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        // Header
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-
-        // Core data (size_t fields as uint64_t)
-        append_u64(static_cast<uint64_t>(key_count_));
-        append_u64(static_cast<uint64_t>(num_buckets_));
-        append_u64(static_cast<uint64_t>(table_size_));
-        append(lambda_);
-        append(seed_);
-
-        // Vectors
-        append_vector_u32(displacements_);
-        append_vector_i64(slot_map_);
-
-        return result;
+        phf_serial::append_vector(out, displacements_);
+        phf_serial::append_vector(out, slot_map_);
+        return out;
     }
 
     [[nodiscard]] static result<chd_hasher> deserialize(std::span<const std::byte> data) {
-        size_t offset = 0;
+        phf_serial::reader r(data);
 
-        auto read_bytes = [&](void* out, size_t n) -> bool {
-            if (offset + n > data.size()) return false;
-            std::memcpy(out, data.data() + offset, n);
-            offset += n;
-            return true;
-        };
-
-        auto read_u32 = [&]() -> std::optional<uint32_t> {
-            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_i64 = [&]() -> std::optional<int64_t> {
-            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u64 = [&]() -> std::optional<uint64_t> {
-            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_double = [&]() -> std::optional<double> {
-            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-
-        // Bounds-checked vector deserialization
-        auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(uint32_t)) return std::nullopt;
-            std::vector<uint32_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u32();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
-            std::vector<int64_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_i64();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        // Verify header
-        auto magic = read_u32();
-        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
-
-        auto version = read_u32();
-        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
-
-        auto algo = read_u32();
-        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
-
-        // Read core data (all counts as uint64_t)
-        auto key_count_u64 = read_u64();
-        auto num_buckets_u64 = read_u64();
-        auto table_size_u64 = read_u64();
-        auto lambda = read_double();
-        auto seed = read_u64();
-
-        if (!key_count_u64 || !num_buckets_u64 || !table_size_u64 || !lambda || !seed) {
+        if (!phf_serial::verify_header(r, ALGORITHM_ID)) {
             return std::unexpected(error::invalid_format);
         }
 
-        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+        uint64_t key_count_u64{}, num_buckets_u64{}, table_size_u64{}, seed{};
+        double lambda{};
+        if (!r.read(key_count_u64) || !r.read(num_buckets_u64) ||
+            !r.read(table_size_u64) || !r.read(lambda) || !r.read(seed)) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
 
-        chd_hasher hasher(static_cast<size_t>(*key_count_u64), *lambda, *seed);
-        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
-        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
+        chd_hasher hasher(static_cast<size_t>(key_count_u64), lambda, seed);
+        hasher.num_buckets_ = static_cast<size_t>(num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(table_size_u64);
 
-        // Read vectors
-        auto displacements = read_vector_u32();
-        auto slot_map = read_vector_i64();
-
-        if (!displacements || !slot_map) {
+        if (!r.read_vector(hasher.displacements_) || !r.read_vector(hasher.slot_map_)) {
             return std::unexpected(error::invalid_format);
         }
-
-        hasher.displacements_ = std::move(*displacements);
-        hasher.slot_map_ = std::move(*slot_map);
-
         return hasher;
     }
 
@@ -968,21 +869,9 @@ private:
         }
     }
 
-    // Remix function for hash distribution
-    [[nodiscard]] static constexpr uint64_t remix(uint64_t z) noexcept {
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-        return z ^ (z >> 31);
-    }
-
     // Hash with level-specific seed
     [[nodiscard]] uint64_t hash_at_level(std::string_view key, size_t level_idx) const noexcept {
-        uint64_t h = levels_[level_idx].seed;
-        for (unsigned char c : key) {
-            h ^= c;
-            h *= 0x100000001b3ULL;  // FNV prime
-        }
-        return remix(h) % total_slots_;
+        return phf_hash_with_seed(key, levels_[level_idx].seed) % total_slots_;
     }
 
 public:
@@ -1050,146 +939,51 @@ public:
     static constexpr uint32_t ALGORITHM_ID = 3;  // BBHash
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
-        std::vector<std::byte> result;
+        std::vector<std::byte> out;
+        phf_serial::write_header(out, ALGORITHM_ID, static_cast<uint32_t>(NumLevels));
 
-        auto append = [&](const auto& value) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
-            result.insert(result.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::append(out, static_cast<uint64_t>(key_count_));
+        phf_serial::append(out, static_cast<uint64_t>(total_slots_));
+        phf_serial::append(out, gamma_);
+        phf_serial::append(out, base_seed_);
 
-        auto append_u64 = [&](uint64_t value) { append(value); };
-
-        auto append_vector_u64 = [&](const std::vector<uint64_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        auto append_vector_size_as_u64 = [&](const std::vector<size_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append_u64(static_cast<uint64_t>(v));
-        };
-
-        // Header
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-        append(static_cast<uint32_t>(NumLevels));
-
-        // Core data (size_t fields as uint64_t)
-        append_u64(static_cast<uint64_t>(key_count_));
-        append_u64(static_cast<uint64_t>(total_slots_));
-        append(gamma_);
-        append(base_seed_);
-
-        // Levels
-        for (const auto& level : levels_) {
-            append_vector_u64(level.bits);
-            append_vector_size_as_u64(level.rank_checkpoints);
-            append_u64(static_cast<uint64_t>(level.num_keys));
-            append(level.seed);
+        for (const auto& lvl : levels_) {
+            phf_serial::append_vector(out, lvl.bits);
+            phf_serial::append_vector_size(out, lvl.rank_checkpoints);
+            phf_serial::append(out, static_cast<uint64_t>(lvl.num_keys));
+            phf_serial::append(out, lvl.seed);
         }
-
-        return result;
+        return out;
     }
 
     [[nodiscard]] static result<bbhash_hasher> deserialize(std::span<const std::byte> data) {
-        size_t offset = 0;
+        phf_serial::reader r(data);
 
-        auto read_bytes = [&](void* out, size_t n) -> bool {
-            if (offset + n > data.size()) return false;
-            std::memcpy(out, data.data() + offset, n);
-            offset += n;
-            return true;
-        };
-
-        auto read_u32 = [&]() -> std::optional<uint32_t> {
-            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u64 = [&]() -> std::optional<uint64_t> {
-            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_double = [&]() -> std::optional<double> {
-            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-
-        // Bounds-checked vector deserialization
-        auto read_vector_u64 = [&]() -> std::optional<std::vector<uint64_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
-            std::vector<uint64_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u64();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        auto read_vector_u64_as_size = [&]() -> std::optional<std::vector<size_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(uint64_t)) return std::nullopt;
-            std::vector<size_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u64();
-                if (!v) return std::nullopt;
-                vec.push_back(static_cast<size_t>(*v));
-            }
-            return vec;
-        };
-
-        // Verify header
-        auto magic = read_u32();
-        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
-
-        auto version = read_u32();
-        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
-
-        auto algo = read_u32();
-        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
-
-        auto num_levels = read_u32();
-        if (!num_levels || *num_levels != NumLevels) return std::unexpected(error::invalid_format);
-
-        // Read core data (all counts as uint64_t)
-        auto key_count_u64 = read_u64();
-        auto total_slots_u64 = read_u64();
-        auto gamma = read_double();
-        auto base_seed = read_u64();
-
-        if (!key_count_u64 || !total_slots_u64 || !gamma || !base_seed) {
+        if (!phf_serial::verify_header(r, ALGORITHM_ID, static_cast<uint32_t>(NumLevels))) {
             return std::unexpected(error::invalid_format);
         }
 
-        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+        uint64_t key_count_u64{}, total_slots_u64{}, base_seed{};
+        double gamma{};
+        if (!r.read(key_count_u64) || !r.read(total_slots_u64) ||
+            !r.read(gamma) || !r.read(base_seed)) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
 
-        bbhash_hasher hasher(static_cast<size_t>(*key_count_u64), *gamma, *base_seed);
-        hasher.total_slots_ = static_cast<size_t>(*total_slots_u64);
+        bbhash_hasher hasher(static_cast<size_t>(key_count_u64), gamma, base_seed);
+        hasher.total_slots_ = static_cast<size_t>(total_slots_u64);
 
-        // Read levels
-        for (size_t i = 0; i < NumLevels; ++i) {
-            auto bits = read_vector_u64();
-            auto rank_checkpoints = read_vector_u64_as_size();
-            auto num_keys_u64 = read_u64();
-            auto seed = read_u64();
-
-            if (!bits || !rank_checkpoints || !num_keys_u64 || !seed) {
+        for (auto& lvl : hasher.levels_) {
+            uint64_t num_keys{};
+            if (!r.read_vector(lvl.bits) || !r.read_vector_size(lvl.rank_checkpoints) ||
+                !r.read(num_keys) || !r.read(lvl.seed)) {
                 return std::unexpected(error::invalid_format);
             }
-
-            hasher.levels_[i].bits = std::move(*bits);
-            hasher.levels_[i].rank_checkpoints = std::move(*rank_checkpoints);
-            hasher.levels_[i].num_keys = static_cast<size_t>(*num_keys_u64);
-            hasher.levels_[i].seed = *seed;
+            lvl.num_keys = static_cast<size_t>(num_keys);
         }
-
         return hasher;
     }
 
@@ -1453,141 +1247,43 @@ public:
     static constexpr uint32_t ALGORITHM_ID = 5;  // PTHash
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
-        std::vector<std::byte> result;
+        std::vector<std::byte> out;
+        phf_serial::write_header(out, ALGORITHM_ID, static_cast<uint32_t>(AlphaInt));
 
-        auto append = [&](const auto& value) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
-            result.insert(result.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::append(out, static_cast<uint64_t>(key_count_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        phf_serial::append(out, static_cast<uint64_t>(table_size_));
+        phf_serial::append(out, seed_);
 
-        auto append_u64 = [&](uint64_t value) { append(value); };
-
-        auto append_vector_u16 = [&](const std::vector<uint16_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        // Header
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-        append(static_cast<uint32_t>(AlphaInt));
-
-        // Core data (size_t fields as uint64_t)
-        append_u64(static_cast<uint64_t>(key_count_));
-        append_u64(static_cast<uint64_t>(num_buckets_));
-        append_u64(static_cast<uint64_t>(table_size_));
-        append(seed_);
-
-        // Vectors
-        append_vector_u16(pilots_.pilots);
-        append_vector_i64(slot_map_);
-
-        return result;
+        phf_serial::append_vector(out, pilots_.pilots);
+        phf_serial::append_vector(out, slot_map_);
+        return out;
     }
 
     [[nodiscard]] static result<pthash_hasher> deserialize(std::span<const std::byte> data) {
-        size_t offset = 0;
+        phf_serial::reader r(data);
 
-        auto read_bytes = [&](void* out, size_t n) -> bool {
-            if (offset + n > data.size()) return false;
-            std::memcpy(out, data.data() + offset, n);
-            offset += n;
-            return true;
-        };
-
-        auto read_u16 = [&]() -> std::optional<uint16_t> {
-            uint16_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u32 = [&]() -> std::optional<uint32_t> {
-            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_i64 = [&]() -> std::optional<int64_t> {
-            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u64 = [&]() -> std::optional<uint64_t> {
-            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-
-        // Bounds-checked vector deserialization
-        auto read_vector_u16 = [&]() -> std::optional<std::vector<uint16_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(uint16_t)) return std::nullopt;
-            std::vector<uint16_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u16();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
-            std::vector<int64_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_i64();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        // Verify header
-        auto magic = read_u32();
-        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
-
-        auto version = read_u32();
-        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
-
-        auto algo = read_u32();
-        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
-
-        auto alpha_int = read_u32();
-        if (!alpha_int || *alpha_int != AlphaInt) return std::unexpected(error::invalid_format);
-
-        // Read core data (all counts as uint64_t)
-        auto key_count_u64 = read_u64();
-        auto num_buckets_u64 = read_u64();
-        auto table_size_u64 = read_u64();
-        auto seed = read_u64();
-
-        if (!key_count_u64 || !num_buckets_u64 || !table_size_u64 || !seed) {
+        if (!phf_serial::verify_header(r, ALGORITHM_ID, static_cast<uint32_t>(AlphaInt))) {
             return std::unexpected(error::invalid_format);
         }
 
-        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+        uint64_t key_count_u64{}, num_buckets_u64{}, table_size_u64{}, seed{};
+        if (!r.read(key_count_u64) || !r.read(num_buckets_u64) ||
+            !r.read(table_size_u64) || !r.read(seed)) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
 
-        pthash_hasher hasher(static_cast<size_t>(*key_count_u64), *seed);
-        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
-        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
+        pthash_hasher hasher(static_cast<size_t>(key_count_u64), seed);
+        hasher.num_buckets_ = static_cast<size_t>(num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(table_size_u64);
 
-        // Read vectors
-        auto pilots = read_vector_u16();
-        auto slot_map = read_vector_i64();
-
-        if (!pilots || !slot_map) {
+        if (!r.read_vector(hasher.pilots_.pilots) || !r.read_vector(hasher.slot_map_)) {
             return std::unexpected(error::invalid_format);
         }
-
-        hasher.pilots_.pilots = std::move(*pilots);
         hasher.pilots_.num_buckets = hasher.num_buckets_;
-        hasher.slot_map_ = std::move(*slot_map);
-
         return hasher;
     }
 
@@ -1872,138 +1568,44 @@ public:
     static constexpr uint32_t ALGORITHM_ID = 4;  // FCH
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
-        std::vector<std::byte> result;
+        std::vector<std::byte> out;
+        phf_serial::write_header(out, ALGORITHM_ID);
 
-        auto append = [&](const auto& value) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(value)>>(value);
-            result.insert(result.end(), bytes.begin(), bytes.end());
-        };
+        phf_serial::append(out, static_cast<uint64_t>(key_count_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        phf_serial::append(out, static_cast<uint64_t>(table_size_));
+        phf_serial::append(out, bucket_size_);
+        phf_serial::append(out, seed_);
 
-        auto append_u64 = [&](uint64_t value) { append(value); };
-
-        auto append_vector_u32 = [&](const std::vector<uint32_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        auto append_vector_i64 = [&](const std::vector<int64_t>& vec) {
-            append_u64(static_cast<uint64_t>(vec.size()));
-            for (const auto& v : vec) append(v);
-        };
-
-        // Header
-        append(PERFECT_HASH_MAGIC);
-        append(PERFECT_HASH_VERSION);
-        append(ALGORITHM_ID);
-
-        // Core data (size_t fields as uint64_t)
-        append_u64(static_cast<uint64_t>(key_count_));
-        append_u64(static_cast<uint64_t>(num_buckets_));
-        append_u64(static_cast<uint64_t>(table_size_));
-        append(bucket_size_);
-        append(seed_);
-
-        // Vectors
-        append_vector_u32(displacements_);
-        append_vector_i64(slot_map_);
-
-        return result;
+        phf_serial::append_vector(out, displacements_);
+        phf_serial::append_vector(out, slot_map_);
+        return out;
     }
 
     [[nodiscard]] static result<fch_hasher> deserialize(std::span<const std::byte> data) {
-        size_t offset = 0;
+        phf_serial::reader r(data);
 
-        auto read_bytes = [&](void* out, size_t n) -> bool {
-            if (offset + n > data.size()) return false;
-            std::memcpy(out, data.data() + offset, n);
-            offset += n;
-            return true;
-        };
-
-        auto read_u32 = [&]() -> std::optional<uint32_t> {
-            uint32_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_i64 = [&]() -> std::optional<int64_t> {
-            int64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_u64 = [&]() -> std::optional<uint64_t> {
-            uint64_t v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-        auto read_double = [&]() -> std::optional<double> {
-            double v; return read_bytes(&v, sizeof(v)) ? std::optional{v} : std::nullopt;
-        };
-
-        // Bounds-checked vector deserialization
-        auto read_vector_u32 = [&]() -> std::optional<std::vector<uint32_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(uint32_t)) return std::nullopt;
-            std::vector<uint32_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_u32();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        auto read_vector_i64 = [&]() -> std::optional<std::vector<int64_t>> {
-            auto count_opt = read_u64();
-            if (!count_opt || *count_opt > MAX_SERIALIZED_ELEMENT_COUNT) return std::nullopt;
-            auto count = static_cast<size_t>(*count_opt);
-            if (count > (data.size() - offset) / sizeof(int64_t)) return std::nullopt;
-            std::vector<int64_t> vec;
-            vec.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                auto v = read_i64();
-                if (!v) return std::nullopt;
-                vec.push_back(*v);
-            }
-            return vec;
-        };
-
-        // Verify header
-        auto magic = read_u32();
-        if (!magic || *magic != PERFECT_HASH_MAGIC) return std::unexpected(error::invalid_format);
-
-        auto version = read_u32();
-        if (!version || *version != PERFECT_HASH_VERSION) return std::unexpected(error::invalid_format);
-
-        auto algo = read_u32();
-        if (!algo || *algo != ALGORITHM_ID) return std::unexpected(error::invalid_format);
-
-        // Read core data (all counts as uint64_t)
-        auto key_count_u64 = read_u64();
-        auto num_buckets_u64 = read_u64();
-        auto table_size_u64 = read_u64();
-        auto bucket_size = read_double();
-        auto seed = read_u64();
-
-        if (!key_count_u64 || !num_buckets_u64 || !table_size_u64 || !bucket_size || !seed) {
+        if (!phf_serial::verify_header(r, ALGORITHM_ID)) {
             return std::unexpected(error::invalid_format);
         }
 
-        if (*key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
+        uint64_t key_count_u64{}, num_buckets_u64{}, table_size_u64{}, seed{};
+        double bucket_size{};
+        if (!r.read(key_count_u64) || !r.read(num_buckets_u64) ||
+            !r.read(table_size_u64) || !r.read(bucket_size) || !r.read(seed)) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (key_count_u64 > MAX_SERIALIZED_ELEMENT_COUNT) {
             return std::unexpected(error::invalid_format);
         }
 
-        fch_hasher hasher(static_cast<size_t>(*key_count_u64), *bucket_size, *seed);
-        hasher.num_buckets_ = static_cast<size_t>(*num_buckets_u64);
-        hasher.table_size_ = static_cast<size_t>(*table_size_u64);
+        fch_hasher hasher(static_cast<size_t>(key_count_u64), bucket_size, seed);
+        hasher.num_buckets_ = static_cast<size_t>(num_buckets_u64);
+        hasher.table_size_ = static_cast<size_t>(table_size_u64);
 
-        // Read vectors
-        auto displacements = read_vector_u32();
-        auto slot_map = read_vector_i64();
-
-        if (!displacements || !slot_map) {
+        if (!r.read_vector(hasher.displacements_) || !r.read_vector(hasher.slot_map_)) {
             return std::unexpected(error::invalid_format);
         }
-
-        hasher.displacements_ = std::move(*displacements);
-        hasher.slot_map_ = std::move(*slot_map);
-
         return hasher;
     }
 
