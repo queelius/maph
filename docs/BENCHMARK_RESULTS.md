@@ -250,6 +250,28 @@ Four strategies are compared:
 | fat+bucket  | phobic5 |       8 |     2,458  |    2.720 |         35 |    3.87x |
 | **partitioned** | phobic5 |   8 |       **247** | 2.856 |         76 | **38.5x** |
 
+### Scaling to 10M keys (partitioned only; serial would take 15+ minutes)
+
+| config                  | threads | build (s) | bits/key | memory (MB) | query (ns) | T-speedup |
+|-------------------------|--------:|----------:|---------:|------------:|-----------:|----------:|
+| partitioned<phobic3>    |       1 |    10.13  |    2.913 |        3.47 |        300 |     1.00x |
+| partitioned<phobic3>    |       8 |     4.78  |    2.913 |        3.47 |        299 |     2.12x |
+| partitioned<phobic4>    |       1 |    15.19  |    2.758 |        3.29 |        296 |     1.00x |
+| partitioned<phobic4>    |       8 |     5.95  |    2.758 |        3.29 |        293 |     2.55x |
+| partitioned<phobic5>    |       1 |    67.06  |    2.854 |        3.40 |        299 |     1.00x |
+| **partitioned<phobic5>** |   **8** | **16.96** |    2.854 |        3.40 |        291 |  **3.95x** |
+
+Scaling from 1M to 10M:
+- `partitioned<phobic5>` 8T: 1.8s -> 17.0s (near-linear, 9.4x for 10x work)
+- bits/key essentially unchanged (2.86 at 1M, 2.85 at 10M)
+- query latency rises about 10% (265 ns -> 291 ns; more L3 pressure)
+- 3.4 MB total memory for 10M keys
+
+Thread scaling at 10M is 2-4x on 8 cores (vs 4-7x at 100K and 1M). The
+remaining non-parallel work (key hashing, partitioning into shards, prefix-sum
+of offsets) becomes visible at this scale: that work is O(n) and serial, so it
+caps speedup even when individual shard builds parallelize perfectly.
+
 ### Observations
 
 - **Partitioned is the clear winner for PHOBIC at scale.** `partitioned<phobic5>`

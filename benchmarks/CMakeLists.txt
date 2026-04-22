@@ -32,3 +32,6 @@ maph_add_benchmark(bench_approximate_map)
 
 # PHOBIC parallel build scaling: threads=1,2,4,8 across phobic3/4/5.
 maph_add_benchmark(bench_phobic_parallel)
+
+# Large-scale partitioned PHOBIC (1M, 10M keys).
+maph_add_benchmark(bench_scale)
