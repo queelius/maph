@@ -423,16 +423,26 @@ public:
 
             std::atomic<bool> failed{false};
 
-            // Classify buckets as fat or thin. Mean bucket size is BucketSize
-            // by construction; fat threshold is 2*BucketSize (bounded below
-            // by 8 so we don't classify every bucket as fat when BucketSize
-            // is small). Buckets are already sorted by descending size, so
-            // all fat buckets form a prefix of bucket_order.
+            // Classify the FIRST FEW buckets (top of the size-sorted order)
+            // as fat and process them cooperatively, one at a time with all
+            // threads collaborating on the pilot search. This targets the
+            // straggler-tail problem: the few largest buckets dominate the
+            // wall-clock time of phase 3 because pilot-search cost grows
+            // super-linearly with bucket size.
+            //
+            // Limiting fat-bucket processing to nthreads buckets ensures
+            // thread-spawn overhead stays bounded: at most nthreads * nthreads
+            // spawn/join pairs, versus (proportional to total_fat_buckets *
+            // nthreads) if we processed every large-enough bucket cooperatively.
+            // This keeps the strategy net-positive even for small key counts
+            // where many buckets would otherwise qualify as "fat" by size.
             const size_t fat_threshold =
                 std::max<size_t>(BucketSize * 2, 8);
+            const size_t max_fat_buckets = nthreads;
 
             size_t first_thin_idx = 0;
             while (first_thin_idx < num_buckets &&
+                   first_thin_idx < max_fat_buckets &&
                    bucket_keys[bucket_order[first_thin_idx]].size() >= fat_threshold) {
                 ++first_thin_idx;
             }
