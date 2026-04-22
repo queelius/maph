@@ -354,14 +354,25 @@ public:
         //
         // The sequential algorithm processes buckets in descending-size order,
         // claiming slots against a plain bool bitset. The parallel version
-        // replaces the bitset with atomic uint64 words and lets workers pull
-        // buckets from a shared atomic counter.
+        // replaces the bitset with atomic uint64 words and splits work in
+        // two phases:
+        //
+        // Phase 3a (fat buckets): buckets whose size >= 2*BucketSize (the
+        // straggler tail) are processed one at a time, with ALL threads
+        // cooperatively searching pilots in disjoint strides. This attacks
+        // the straggler effect that caps speedup when most threads finish
+        // thin buckets long before the last fat bucket completes.
+        //
+        // Phase 3b (thin buckets): the remaining buckets use work-stealing:
+        // each thread claims one bucket from a shared atomic counter and
+        // tries pilots sequentially.
         //
         // Correctness: each slot claim is a single atomic fetch_or. If the
-        // bit was already set (another worker or an earlier attempt by the
-        // same worker), the worker releases all slots it did successfully
-        // claim and tries the next pilot. At the end, each set bit in the
-        // bitset corresponds to exactly one (bucket, key) pair.
+        // bit was already set, the worker releases all slots it did
+        // successfully claim and tries the next pilot. For fat buckets,
+        // multiple threads race on distinct pilot candidates for the same
+        // bucket; the winner is selected by a compare_exchange on a shared
+        // pilot_found flag, and all losers release their claims.
         //
         // Performance: conflicts are rare with 65535 pilot candidates per
         // bucket and a reasonably uniform hash. Livelock is bounded by the
@@ -405,17 +416,134 @@ public:
                     return bucket_keys[a].size() > bucket_keys[b].size();
                 });
 
-            // Shared state for phase 3.
+            // Shared slot bitmap for phases 3a and 3b.
             size_t num_words = (range_size + 63) / 64;
             std::vector<std::atomic<uint64_t>> occupied(num_words);
             for (auto& w : occupied) w.store(0, std::memory_order_relaxed);
 
-            std::atomic<size_t> next_bucket{0};
             std::atomic<bool> failed{false};
+
+            // Classify buckets as fat or thin. Mean bucket size is BucketSize
+            // by construction; fat threshold is 2*BucketSize (bounded below
+            // by 8 so we don't classify every bucket as fat when BucketSize
+            // is small). Buckets are already sorted by descending size, so
+            // all fat buckets form a prefix of bucket_order.
+            const size_t fat_threshold =
+                std::max<size_t>(BucketSize * 2, 8);
+
+            size_t first_thin_idx = 0;
+            while (first_thin_idx < num_buckets &&
+                   bucket_keys[bucket_order[first_thin_idx]].size() >= fat_threshold) {
+                ++first_thin_idx;
+            }
+
+            // Phase 3a (fat buckets): cooperative per-pilot parallelism.
+            // One bucket at a time, all threads race on disjoint pilot
+            // strides. The first thread to successfully claim all its
+            // candidate slots wins via compare_exchange; losers release.
+            auto process_fat_bucket = [&](size_t bucket_id) {
+                const auto& keys_in_bucket = bucket_keys[bucket_id];
+                if (keys_in_bucket.empty()) {
+                    phf.pilots_[bucket_id] = 0;
+                    return;
+                }
+
+                std::atomic<bool> pilot_found{false};
+
+                auto search = [&](size_t thread_id) {
+                    std::vector<size_t> candidate_slots;
+                    std::vector<size_t> claimed;
+
+                    // Each thread tries pilots [thread_id, thread_id + nthreads, ...].
+                    // Combined across threads, full coverage of [0, 65535).
+                    for (uint32_t base = static_cast<uint32_t>(thread_id);
+                         base < 65535;
+                         base += static_cast<uint32_t>(nthreads))
+                    {
+                        if (pilot_found.load(std::memory_order_acquire)) return;
+                        uint16_t pilot = static_cast<uint16_t>(base);
+
+                        candidate_slots.clear();
+                        bool internal_collision = false;
+
+                        for (size_t ki : keys_in_bucket) {
+                            size_t slot = phf.slot_with_pilot(hashes[ki].h2, pilot);
+                            for (size_t prev : candidate_slots) {
+                                if (prev == slot) { internal_collision = true; break; }
+                            }
+                            if (internal_collision) break;
+                            candidate_slots.push_back(slot);
+                        }
+                        if (internal_collision) continue;
+
+                        claimed.clear();
+                        bool conflict = false;
+                        for (size_t slot : candidate_slots) {
+                            size_t word = slot >> 6;
+                            uint64_t bit = uint64_t{1} << (slot & 63);
+                            uint64_t old = occupied[word].fetch_or(
+                                bit, std::memory_order_acq_rel);
+                            if (old & bit) { conflict = true; break; }
+                            claimed.push_back(slot);
+                        }
+
+                        if (conflict) {
+                            for (size_t slot : claimed) {
+                                size_t word = slot >> 6;
+                                uint64_t bit = uint64_t{1} << (slot & 63);
+                                occupied[word].fetch_and(
+                                    ~bit, std::memory_order_release);
+                            }
+                            continue;
+                        }
+
+                        // Slots claimed successfully. Try to commit this pilot.
+                        // If another thread already committed, release our
+                        // claims and exit.
+                        bool expected = false;
+                        if (pilot_found.compare_exchange_strong(
+                                expected, true,
+                                std::memory_order_acq_rel,
+                                std::memory_order_acquire)) {
+                            phf.pilots_[bucket_id] = pilot;
+                            return;
+                        } else {
+                            for (size_t slot : claimed) {
+                                size_t word = slot >> 6;
+                                uint64_t bit = uint64_t{1} << (slot & 63);
+                                occupied[word].fetch_and(
+                                    ~bit, std::memory_order_release);
+                            }
+                            return;
+                        }
+                    }
+                };
+
+                std::vector<std::thread> pool;
+                pool.reserve(nthreads);
+                for (size_t t = 0; t < nthreads; ++t) pool.emplace_back(search, t);
+                for (auto& th : pool) th.join();
+
+                if (!pilot_found.load(std::memory_order_acquire)) {
+                    failed.store(true, std::memory_order_release);
+                }
+            };
+
+            for (size_t i = 0; i < first_thin_idx; ++i) {
+                if (failed.load(std::memory_order_acquire)) break;
+                process_fat_bucket(bucket_order[i]);
+            }
+
+            if (failed.load(std::memory_order_acquire)) {
+                return std::unexpected(error::optimization_failed);
+            }
+
+            // Phase 3b (thin buckets): work-stealing.
+            std::atomic<size_t> next_bucket{first_thin_idx};
 
             auto worker = [&]() {
                 std::vector<size_t> candidate_slots;
-                std::vector<size_t> claimed;  // slots this worker successfully set
+                std::vector<size_t> claimed;
 
                 while (!failed.load(std::memory_order_acquire)) {
                     size_t idx = next_bucket.fetch_add(1, std::memory_order_relaxed);

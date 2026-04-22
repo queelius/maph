@@ -273,3 +273,19 @@ TEST_CASE("phobic: serialization round-trip after parallel build", "[phobic][par
         REQUIRE(phf->slot_for(k).value == restored->slot_for(k).value);
     }
 }
+
+TEST_CASE("phobic: fat-bucket cooperative path correctness", "[phobic][parallel]") {
+    // Large-enough scale that some buckets will be fat (>= 2K).
+    auto keys = make_keys(50000);
+    auto phf = phobic5::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(phf.has_value());
+    REQUIRE(verify_bijectivity(*phf, keys));
+}
+
+TEST_CASE("phobic: parallel build with no fat buckets", "[phobic][parallel]") {
+    // Very small set; no bucket can exceed threshold.
+    auto keys = make_keys(2048);  // just above threshold
+    auto phf = phobic5::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(phf.has_value());
+    REQUIRE(verify_bijectivity(*phf, keys));
+}
