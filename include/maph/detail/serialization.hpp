@@ -103,6 +103,16 @@ public:
         }
         return true;
     }
+
+    /// Bind `out` to the next `size` bytes of the underlying buffer and
+    /// advance the cursor. Returns false without touching the cursor if the
+    /// request would read past the end.
+    [[nodiscard]] bool read_span(std::span<const std::byte>& out, size_t size) noexcept {
+        if (size > remaining()) return false;
+        out = std::span<const std::byte>(data_.data() + off_, size);
+        off_ += size;
+        return true;
+    }
 };
 
 /// Verify the standard header (magic + version + algorithm id). Optionally

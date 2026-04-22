@@ -43,6 +43,7 @@ set(MAPH_TEST_SOURCES
     test_perfect_hash_extended.cpp
     test_perfect_filter.cpp
     test_membership.cpp
+    test_partitioned.cpp
 )
 
 set(MAPH_TEST_TARGETS "")
