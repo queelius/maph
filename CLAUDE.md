@@ -2,172 +2,124 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Overview
+## What this is
 
-**maph** is a header-only C++23 library for perfect hash functions (PHFs), membership filters, and memory-mapped value storage. A PHF maps n keys to distinct integers in [0, m); maph provides algorithms to build them, a composition layer to add approximate membership testing, and (optionally) an mmap-backed storage layer for key-value workloads.
+**maph** (Modern Approximate Perfect Hashing) is a C++23 research playground for perfect hash functions and related approximate data structures. The library is organized around concepts: a concept defines a contract; algorithms are interchangeable implementations; benchmarks compare them along concept-relevant axes (bits per key, query latency, build time, false positive rate).
 
-Requires GCC 13+ or Clang 16+. Uses `std::expected`, C++20 concepts, and (for the storage layer) `mmap()`.
+It is not a production library. For Python/R users, see `../phobic/` (standalone C11 package for PHOBIC).
 
-## Build and Test
+Requires GCC 13+ or Clang 16+ for `std::expected` and C++20 concepts.
 
-All commands run from the `build/` directory:
+## Build and test
 
 ```bash
 mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
 make -j$(nproc)
 
 # Run all tests
-ctest --output-on-failure -R "v3_"
+ctest --output-on-failure
 
-# Run a single test suite
+# Run a single test binary or tag
 ./tests/v3/test_v3_phobic
-./tests/v3/test_v3_perfect_hash
-./tests/v3/test_v3_perfect_filter
-./tests/v3/test_v3_membership
-./tests/v3/test_v3_phf_concept
+./tests/v3/test_v3_perfect_hash "[bbhash]"
 
-# Run by Catch2 tag
-./tests/v3/test_v3_perfect_hash "[bbhash]"    # [recsplit], [chd], [fch], [pthash]
-./tests/v3/test_v3_membership "[packed]"
-./tests/v3/test_v3_perfect_filter "[perfect_filter]"
-
-# Coverage and sanitizers
-cmake .. -DBUILD_TESTS=ON -DENABLE_COVERAGE=ON && make -j && make v3_coverage
+# Coverage / sanitizers
+cmake .. -DBUILD_TESTS=ON -DENABLE_COVERAGE=ON && make -j v3_coverage
 cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZERS=ON && make -j
 
-# Benchmarks (fair comparison of all algorithms, pure PHF + perfect_filter)
-cmake .. -DBUILD_BENCHMARKS=ON && make -j bench_phobic
+# Benchmarks
 ./benchmarks/bench_phobic 10000 100000 1000000
+./benchmarks/bench_perfect_hash_compare 1000 10000 100000
 ```
 
-CMake options: `BUILD_TESTS`, `BUILD_BENCHMARKS`, `BUILD_EXAMPLES`, `BUILD_REST_API`, `ENABLE_COVERAGE`, `ENABLE_SANITIZERS` (all OFF by default).
+CMake options: `BUILD_TESTS`, `BUILD_BENCHMARKS`, `ENABLE_COVERAGE`, `ENABLE_SANITIZERS` (all OFF by default).
 
-## Architecture
+## Header layout
 
-The library is layered. Lower layers know nothing about upper layers:
+Header-only. Every `.hpp` has a single responsibility. Adding a new algorithm is one file plus a benchmark entry.
 
 ```
-Layer 3: maph.hpp, table.hpp, storage.hpp, optimization.hpp  (mmap key-value storage)
-         |
-Layer 2: perfect_filter.hpp                                   (PHF + fingerprints)
-         |
-Layer 1: phobic.hpp, hashers_perfect.hpp, membership.hpp      (PHF algorithms, fingerprint array)
-         |
-Layer 0: phf_concept.hpp, core.hpp                            (concepts, strong types, errors)
+include/maph/
+    core.hpp                              strong types, error, result<T>
+    concepts/
+        perfect_hash_function.hpp         slot_for, num_keys, range_size, serialize
+        membership_oracle.hpp             verify(key) -> bool, bits_per_key, memory_bytes
+        approximate_map.hpp               contains, slot_for -> optional, num_keys, range_size
+    detail/
+        serialization.hpp                 phf_serial namespace, magic/version constants
+        hash.hpp                          phf_remix (splitmix64), phf_hash_with_seed (FNV-1a+seed)
+        fingerprint_hash.hpp              membership_fingerprint (for approximate filters)
+    algorithms/
+        phobic.hpp                        PHOBIC, pilot-based (2024)
+        recsplit.hpp                      RecSplit, recursive splitting
+        chd.hpp                           Compress-Hash-Displace
+        bbhash.hpp                        Multi-level bitsets + rank queries
+        fch.hpp                           Fox-Chazelle-Heath displacement
+        pthash.hpp                        PTHash (limited to small key sets)
+    filters/
+        packed_fingerprint.hpp            k-bit fingerprints packed by slot
+        xor_filter.hpp                    3-wise xor filter (standalone membership oracle)
+        ribbon_filter.hpp                 Homogeneous ribbon retrieval
+    composition/
+        perfect_filter.hpp                PHF + packed_fingerprint = approximate_map
 ```
 
-### Layer 0: Concepts and core types
+## Concepts
 
-**`phf_concept.hpp`** defines the interface every PHF must satisfy:
+**`perfect_hash_function`**: `slot_for(key) -> slot_index` (non-optional). For keys in the build set, returns a unique slot in `[0, range_size())`. For keys not in the set, returns an arbitrary valid index. No membership verification happens at this layer.
 
-```cpp
-template<typename P>
-concept perfect_hash_function = requires(const P p, std::string_view key) {
-    { p.slot_for(key) }    -> std::convertible_to<slot_index>;  // NOT optional
-    { p.num_keys() }       -> std::convertible_to<size_t>;
-    { p.range_size() }     -> std::convertible_to<size_t>;      // m >= n
-    { p.bits_per_key() }   -> std::convertible_to<double>;
-    { p.memory_bytes() }   -> std::convertible_to<size_t>;
-    { p.serialize() }      -> std::convertible_to<std::vector<std::byte>>;
-};
-```
+**`membership_oracle`**: `verify(key) -> bool`. Approximate membership with bounded false positive rate. xor_filter and ribbon_filter are standalone oracles.
 
-Critical semantics: `slot_for()` returns a `slot_index` directly, not `std::optional`. For keys in the build set the result is unique and in `[0, range_size())`. For unknown keys the result is arbitrary but still in range. **No fingerprint verification happens at the PHF layer.**
+**`approximate_map`**: `contains(key) -> bool` plus `slot_for(key) -> optional<slot_index>`. Combines a PHF with membership verification. `perfect_filter<PHF, FPBits>` is the canonical instance. Space: `c + log2(1/eps)` bits/key where `c` is the PHF's space. Beats Bloom filters (`1.44 * log2(1/eps)`) when `eps < 2^-(c/0.44)`. At c=2.7 (PHOBIC), that's `eps < 1.4%`.
 
-**`core.hpp`** has strong types (`slot_index`, `hash_value`, `slot_count`) wrapping `uint64_t`, the `error` enum, `result<T>` = `std::expected<T, error>`, and the `storage_backend` concept.
+## Algorithms at a glance (from bench_phobic, pure PHF bits/key)
 
-### Layer 1: PHF algorithms
+| Algorithm | Bits/key | Query | Notes |
+|-----------|---------:|------:|-------|
+| PHOBIC    | ~2.7     | fast  | Best space. Slow build at scale (pilot search). |
+| BBHash    | ~6 (theoretical) / ~27 (current 3-level) | fast  | O(1) rank queries. NumLevels=3 too few for >100K. |
+| PTHash    | ~81      | fast  | Limited to small key sets (<100 in current impl). |
+| RecSplit  | ~96      | med   | Simplified implementation; far from paper's 1.8 bits/key. |
+| CHD       | ~134     | med   | Proven reliability, large displacement table. |
+| FCH       | ~200     | med   | Educational. |
 
-Five algorithms satisfy `perfect_hash_function`:
+See `docs/OPTIMIZATION_NOTES.md` for what's left to improve.
 
-| Header | Algorithm | Pure bits/key | Notes |
-|--------|-----------|---------------|-------|
-| `phobic.hpp` | PHOBIC | **~2.7** | Pilot-based. Slow build (pilot search is quadratic-ish per bucket), fastest queries. |
-| `hashers_perfect.hpp` | RecSplit, CHD, BBHash, FCH, PTHash | 27-200 | Legacy algorithms, rewritten under the new concept. |
+## Adding a new algorithm
 
-Each has a `builder` class with `.add(key)`, `.add_all(keys)`, `.with_seed(n)`, `.build() -> result<PHF>`. Builds **retry on failure** (new seed, sometimes bumped parameters like alpha or gamma) rather than using overflow.
+1. Create `include/maph/algorithms/<name>.hpp` with a class satisfying `perfect_hash_function`.
+2. Provide a nested `builder` satisfying `phf_builder`: `.add()`, `.add_all()`, `.with_seed()`, `.build() -> result<T>`.
+3. Retry with a different seed on build failure. No overflow, no fingerprints (those come from `composition/perfect_filter.hpp`).
+4. Use `detail/serialization.hpp` for the magic/version header; unique `ALGORITHM_ID` (PHOBIC=6).
+5. Add `static_assert(perfect_hash_function<your_type>);` at the bottom of the file.
+6. Test: follow the pattern in `tests/v3/test_phobic.cpp` (bijectivity, space, determinism, serialization round-trip, `perfect_filter` composition).
+7. Benchmark: add a case to `benchmarks/bench_phobic.cpp`.
 
-**Important:** These algorithms no longer bake in fingerprints or overflow handling. That is entirely the job of `perfect_filter`. Before today's migration they stored 64-bit fingerprints per key; that's gone.
+## Adding a new filter
 
-**`membership.hpp`** contains only `packed_fingerprint_array<FPBits>` (1-32 bit fingerprints in a packed bit array) and `membership_fingerprint()` (SplitMix64 hash for fingerprinting). The `xor_filter`, `ribbon_filter`, and `fingerprint_verifier` classes were moved out for a future separate project.
-
-### Layer 2: Perfect filter composition
-
-**`perfect_filter.hpp`** composes any PHF with a packed fingerprint array:
-
-```cpp
-template<perfect_hash_function PHF, unsigned FPBits = 16>
-class perfect_filter {
-    PHF phf_;
-    packed_fingerprint_array<FPBits> fps_;
-public:
-    static perfect_filter build(PHF phf, const std::vector<std::string>& keys);
-    bool contains(std::string_view key) const noexcept;
-    std::optional<slot_index> slot_for(std::string_view key) const noexcept;
-};
-```
-
-Query: compute slot via PHF, verify fingerprint, return slot or nullopt. FP rate is 2^-FPBits for non-member keys.
-
-**Why this design wins:** A perfect filter uses `c + log2(1/epsilon)` bits/key (where `c` is the PHF's bits/key). A Bloom filter needs `1.44 * log2(1/epsilon)`. Perfect filter beats Bloom when `epsilon < 2^-(c/0.44)`. At c=2.7, that's epsilon < 1.4%. As FPR shrinks, the advantage grows because Bloom's 1.44x multiplier is structural; perfect filter pays 1.0x per bit of FPR precision.
-
-### Layer 3: Memory-mapped storage (optional)
-
-`maph.hpp`, `table.hpp`, `storage.hpp`, `optimization.hpp` form the mmap key-value layer. These are currently standalone-compatible via adapter methods (`hash()` and `max_slots()` on `minimal_perfect_hasher` delegate to `slot_for()`/`range_size()`). The table layer still uses a lightweight unconstrained `typename` template parameter rather than a concept; the old `hasher` concept was removed in today's migration.
+1. Create `include/maph/filters/<name>.hpp` with a class satisfying `membership_oracle`.
+2. `build(keys)` constructs; `verify(key) -> bool` queries.
+3. For serialization, follow the conventions in the other filter headers.
+4. If the filter is composable with a PHF to form an `approximate_map`, it may also be used via `composition/perfect_filter.hpp` (which is currently specialized to `packed_fingerprint_array`).
 
 ## Testing
 
-Framework: **Catch2 v3** with `catch_discover_tests()`.
+**Catch2 v3**. One test file per header. Tags: `[core]`, `[phobic]`, `[recsplit]`, `[chd]`, `[bbhash]`, `[fch]`, `[pthash]`, `[packed]`, `[xor]`, `[ribbon]`, `[perfect_filter]`, `[phf_concept]`, `[membership]`.
 
-| Test file | What it tests |
-|-----------|---------------|
-| `test_phf_concept.cpp` | Concept satisfaction (compile-time + mock runtime) |
-| `test_phobic.cpp` | PHOBIC algorithm (bijectivity, space, serialization, perfect_filter composition) |
-| `test_perfect_hash.cpp` | The 5 legacy algorithms under the new concept |
-| `test_perfect_filter.cpp` | PHF + fingerprint composition |
-| `test_membership.cpp` | `packed_fingerprint_array` at widths 8, 10, 12, 16, 32 |
-| `test_core.cpp`, `test_hashers.cpp`, `test_storage.cpp`, `test_table.cpp`, `test_integration.cpp`, `test_properties.cpp` | Lower-level and integration tests |
+`test_v3_all_in_one` is an aggregate target that compiles all test sources together (used by coverage).
 
-Current state: ~184 tests passing. There are **9 pre-existing failures** (mmap_storage error conditions, cached_storage edge cases, integration real-world scenarios, performance scaling) that were failing before today's work and are unrelated to PHF changes.
+## Current state
 
-## Current State (as of 2026-03)
+60/60 tests passing. No pre-existing failures (they were all in the removed mmap storage layer).
 
-Today's session completed a major migration:
+## Relationship to phobic
 
-1. **PHOBIC added** as a clean modern PHF (~2.7 bits/key, pilot-based)
-2. **`perfect_hash_function` concept** introduced, replacing old `hasher`/`perfect_hasher` concepts
-3. **All 5 legacy algorithms rewritten** to satisfy the new concept (stripped fingerprints and overflow)
-4. **`perfect_filter` composition layer** added for optional membership verification
-5. **`packed_fingerprint_array` relaxed** to support any width in [1, 32] bits
-6. **Fair benchmarks** now compare all algorithms with matched fingerprint widths
+`../phobic/` is a standalone Python package with a pure C11 PHOBIC implementation. maph is the C++ research playground; phobic is the production Python artifact. Algorithm work happens in maph; ideas that prove out get ported to phobic if and when they're worth shipping.
 
-See `docs/superpowers/specs/` and `docs/superpowers/plans/` for the design and migration history. See `docs/OPTIMIZATION_NOTES.md` for what's left to optimize.
+## Coding standards
 
-Known weaknesses:
-- **PHOBIC build time** is slow at scale (~23s for 100K keys). Pilot search is parallelizable but not yet parallelized in maph's version.
-- **BBHash space** can be high (up to 27 bits/key at scale) because 3 levels + gamma retry isn't enough for minimal mode. Increasing NumLevels would help.
-- **RecSplit space** is 96 bits/key (the simplified impl). The theoretical 1.8 bits/key requires a tighter encoding scheme.
-
-## Adding a New PHF Algorithm
-
-1. Create a new header (e.g., `include/maph/myalgo.hpp`).
-2. Implement a class satisfying `perfect_hash_function` (see `phf_concept.hpp`).
-3. Provide a `builder` class with `.add()`, `.add_all()`, `.with_seed()`, `.build() -> result<MyAlgo>`.
-4. On build failure, retry with a different seed (loop up to 50-100 attempts). No overflow.
-5. Write serialization using `PERFECT_HASH_MAGIC` (0x4D415048) and a unique `ALGORITHM_ID`.
-6. Add `static_assert(perfect_hash_function<MyAlgo>);` in the header.
-7. Tests follow the pattern in `tests/v3/test_phobic.cpp`: bijectivity, space, determinism, serialization round-trip, `perfect_filter` composition.
-8. Add to `benchmarks/bench_phobic.cpp` for fair comparison.
-
-## Related Projects
-
-- **`../phobic/`**: standalone Python package for PHOBIC (C11, no C++, parallel build via pthreads). Built in this session.
-- Membership filters (xor_filter, ribbon_filter, bloom) are slated for a separate project (not maph).
-
-## Coding Standards
-
-- **Naming**: classes `snake_case` for algorithm types (follows existing library convention), functions `snake_case`, constants `UPPER_SNAKE_CASE`, members `member_name_`
-- **Formatting**: 4-space indent, 100-char line limit
-- **Style**: RAII, `std::unique_ptr` over raw pointers, `const` everywhere possible
-- **Commits**: conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`, `chore:`)
+- **Naming**: classes `snake_case` (library convention), functions `snake_case`, constants `UPPER_SNAKE_CASE`, members `member_name_`.
+- **Formatting**: 4-space indent, 100-char line limit.
+- **Style**: RAII, `const` everywhere, `std::unique_ptr` over raw pointers.
+- **Commits**: conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`, `chore:`).

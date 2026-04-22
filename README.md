@@ -1,284 +1,85 @@
-# maph - Memory-Mapped Approximate Perfect Hash
+# maph
 
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/std/the-standard)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**Modern Approximate Perfect Hashing.** A C++23 research playground for perfect hash functions and related approximate data structures. Concept-driven: a concept defines the contract, algorithms are interchangeable implementations, benchmarks compare them.
 
-A high-performance, memory-mapped database and generalized framework for space-efficient approximate data structures with O(1) lookups. Built on perfect hash functions, maph provides sub-microsecond access to arbitrary mappings (f: X → Y) with configurable storage and custom decoders.
+Not a production library. For a production Python package using one of these algorithms (PHOBIC), see [phobic](https://github.com/queelius/phobic).
 
-## Key Features
+## Why
 
-- **O(1) Lookups**: Guaranteed constant-time operations with perfect hash optimization
-- **Memory-Mapped Storage**: Zero-copy access via mmap for minimal memory overhead  
-- **Lock-Free Operations**: Atomic operations for thread-safe concurrent access
-- **Generalized Framework**: Support for arbitrary mappings X → Y, not just membership
-- **JSON Database**: Built-in daemon for JSON key-value storage with REST API
-- **Configurable Storage**: 8/16/32/64-bit storage options for space/accuracy trade-offs
-- **Custom Decoders**: Extensible decoder system for specialized applications
-- **SIMD Optimized**: AVX2 acceleration for batch operations
+Perfect hash function design is a tradeoff space: bits per key, query latency, construction cost, and false positive rate (when composed with membership verification). New algorithms appear every few years. This repo exists to prototype, compare, and evaluate them against a crystallized concept so the comparisons are apples to apples.
 
-## Performance
+Every perfect hash function satisfies the same concept (`slot_for`, `num_keys`, `range_size`, `serialize`), so adding one is a single header file plus a benchmark entry.
 
-| Operation | Throughput | Latency | Notes |
-|-----------|------------|---------|-------|
-| GET | 10M ops/sec | <100ns | O(1) with perfect hash |
-| SET | 8M ops/sec | <150ns | Lock-free atomic updates |
-| Batch GET | 50M ops/sec | - | SIMD optimized |
-| Batch SET | 40M ops/sec | - | Parallel processing |
-| Scan | 100M items/sec | - | Sequential memory access |
+## Install
 
-## Quick Start
-
-### C++ Library
-
-```cpp
-#include <maph.hpp>
-
-// Create a new maph store
-auto store = maph::Maph::create("mystore.maph", 1000000);
-
-// Store JSON key-value pairs
-store->set(R"({"user": "alice"})", R"({"score": 95})");
-
-// Retrieve with O(1) lookup
-auto value = store->get(R"({"user": "alice"})");
-if (value) {
-    std::cout << *value << std::endl;  // {"score": 95}
-}
-
-// Batch operations for high throughput
-std::vector<std::pair<JsonView, JsonView>> batch = {
-    {R"({"id": 1})", R"({"name": "item1"})"},
-    {R"({"id": 2})", R"({"name": "item2"})"}
-};
-store->mset(batch);
-```
-
-### JSON Database Server
+Header-only. Requires C++23 (GCC 13+ or Clang 16+).
 
 ```bash
-# Start the maph daemon
-./maph_daemon --port 8080 --threads 4
-
-# CLI operations
-./maph_cli set mystore '{"key": "user:1"}' '{"name": "Alice", "age": 30}'
-./maph_cli get mystore '{"key": "user:1"}'
-./maph_cli scan mystore --limit 100
-
-# REST API
-curl -X POST http://localhost:8080/stores -d '{"name": "products", "slots": 1000000}'
-curl -X PUT 'http://localhost:8080/stores/products/keys/"sku:12345"' \
-  -d '{"name": "Laptop", "price": 999}'
-curl 'http://localhost:8080/stores/products/keys/"sku:12345"'
-
-# Optimize for perfect hash (O(1) guaranteed)
-curl -X POST http://localhost:8080/stores/products/optimize
-```
-
-
-## Architecture
-
-The system is built in layers:
-
-1. **Core Library** (`include/maph.hpp`): Memory-mapped storage with atomic operations
-2. **Approximate Maps** (`include/maph/approximate_map.hpp`): Generalized X→Y mappings
-3. **Decoders** (`include/maph/decoders.hpp`): Configurable output transformations
-4. **Applications**:
-   - CLI tool (`maph_cli`): Command-line interface
-   - Daemon (`maph_daemon`): Standalone JSON database server
-   - REST API (`integrations/rest_api`): HTTP interface with web UI
-
-### Storage Layout
-
-```
-File Structure:
-┌────────────────┐
-│ Header (512B)  │  Magic, version, slot counts, generation
-├────────────────┤
-│ Slot 0 (512B) │  Hash (32b) + Version (32b) + Data (504B)
-├────────────────┤
-│ Slot 1 (512B) │  
-├────────────────┤
-│      ...       │
-└────────────────┘
-```
-
-## Building
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/maph.git
-cd maph
-
-# Build everything
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release \
-         -DBUILD_TESTS=ON \
-         -DBUILD_REST_API=ON \
-         -DBUILD_EXAMPLES=ON
+git clone https://github.com/queelius/maph
+cd maph && mkdir build && cd build
+cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
 make -j$(nproc)
-
-# Run tests
-ctest --verbose
-
-# Install
-sudo make install
+ctest --output-on-failure
 ```
 
-### CMake Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| BUILD_TESTS | OFF | Build test suite |
-| BUILD_EXAMPLES | OFF | Build example programs |
-| BUILD_REST_API | OFF | Build REST API server |
-| BUILD_DOCS | OFF | Generate documentation |
-
-## Advanced Usage
-
-### Custom Decoders
-
-Create specialized mappings for your use case:
+## Quick look
 
 ```cpp
-// Threshold filter - maps values to boolean based on threshold
-template <typename StorageType>
-struct ThresholdDecoder {
-    using output_type = bool;
-    float threshold;
-    
-    bool operator()(StorageType value, StorageType max_val) const {
-        return (float(value) / max_val) > threshold;
-    }
-};
+#include <maph/algorithms/phobic.hpp>
+#include <maph/composition/perfect_filter.hpp>
 
-// Quantization decoder - maps to discrete levels
-template <typename StorageType>
-struct QuantizeDecoder {
-    using output_type = int;
-    int levels;
-    
-    int operator()(StorageType value, StorageType max_val) const {
-        return (value * levels) / (max_val + 1);
-    }
-};
+// Pure PHF: keys to unique slots.
+auto phf = maph::phobic5::builder{}.add_all(keys).build().value();
+auto slot = phf.slot_for("alice");   // 0..range_size()
+
+// PHF plus 16-bit fingerprint: approximate membership + slot access.
+auto pf = maph::perfect_filter<maph::phobic5, 16>::build(std::move(phf), keys);
+if (auto s = pf.slot_for("alice")) { /* in set, unique slot */ }
+pf.contains("alice");   // true
+pf.contains("mallory"); // almost certainly false (FP rate 1/65536)
 ```
 
-### Parallel Operations
+## What's inside
 
-```cpp
-// Parallel batch processing with custom thread count
-store->parallel_mset(large_batch, 8);  // Use 8 threads
-
-// Parallel scan with visitor pattern
-std::atomic<size_t> count{0};
-store->parallel_scan([&count](uint64_t idx, uint32_t hash, JsonView value) {
-    if (value.size() > 100) {
-        count++;
-    }
-}, 4);  // Use 4 threads
+```
+include/maph/
+    core.hpp                              strong types, error, result<T>
+    concepts/                             contracts
+        perfect_hash_function.hpp
+        membership_oracle.hpp
+        approximate_map.hpp
+    detail/                               shared helpers
+        serialization.hpp, hash.hpp, fingerprint_hash.hpp
+    algorithms/                           perfect hash functions
+        phobic.hpp, recsplit.hpp, chd.hpp, bbhash.hpp, fch.hpp, pthash.hpp
+    filters/                              membership oracles
+        packed_fingerprint.hpp, xor_filter.hpp, ribbon_filter.hpp
+    composition/
+        perfect_filter.hpp                PHF + packed fingerprint
 ```
 
-### Durability Management
+## Concept vs implementation
 
-```cpp
-// Configure background sync for durability
-auto manager = store->start_durability_manager(
-    std::chrono::seconds(5),  // Sync every 5 seconds
-    1000                       // Or after 1000 operations
-);
+The `perfect_hash_function` concept says: given a key in the build set, return a unique slot. Nothing about membership, nothing about fingerprints, nothing about overflow. Membership verification is a separate concern, answered by `membership_oracle`. Their composition is the `approximate_map`.
 
-// Manual sync
-store->sync();
-```
+This separation is the library's central design choice. It makes comparisons clean: you can report the pure PHF bits/key, or add a 16-bit fingerprint and report bits/key with a 1/65536 FP rate, or try a different oracle entirely.
 
-### Storage Trade-offs
+## Space comparison: perfect filter vs Bloom
 
-| Storage Type | Bytes/Element | False Positive Rate | Use Case |
-|--------------|---------------|-------------------|----------|
-| uint8_t | 1 | 0.39% | Large datasets, error-tolerant |
-| uint16_t | 2 | 0.0015% | Balanced accuracy/space |
-| uint32_t | 4 | ~0% | High accuracy required |
-| uint64_t | 8 | 0% | Perfect accuracy, cryptographic |
+A perfect filter (PHF + k-bit fingerprints) uses `c + k` bits per key, where `c` is the PHF's bits/key and `k = log2(1/eps)` for target FP rate `eps`. A Bloom filter uses `1.44 * k` bits/key.
 
-## Comparison with Other Systems
+The perfect filter beats Bloom whenever `eps < 2^-(c/0.44)`. At PHOBIC's ~2.7 bits/key, that crossover is at `eps ≈ 1.4%`. For `eps < 1%`, the perfect filter is strictly better, and the advantage grows as `eps` shrinks because Bloom pays 1.44 bits per bit of FP precision while the perfect filter pays exactly 1.
 
-| System | Lookup | Space | Persistence | Concurrent | Use Case |
-|--------|--------|-------|-------------|------------|----------|
-| **maph** | O(1) | Optimal | mmap | Lock-free | General K/V, high-perf |
-| Redis | O(1) avg | 10x overhead | AOF/RDB | Single-thread | Cache, sessions |
-| RocksDB | O(log n) | Compressed | SST files | Multi-thread | Large persistent data |
-| Memcached | O(1) avg | In-memory | None | Multi-thread | Simple cache |
-| Bloom filter | O(1) | Optimal | Custom | Read-only | Membership only |
+## Benchmarks
 
-## Use Cases
+`./benchmarks/bench_phobic 10000 100000 1000000` prints a TSV with build time, query latency, bits/key, and memory for every algorithm (pure and composed with `perfect_filter<_, 16>`).
 
-- **High-Performance Cache**: Sub-microsecond lookups for hot data
-- **Feature Stores**: ML feature serving with guaranteed latency
-- **Session Storage**: Web session data with instant access
-- **Approximate Filters**: Bloom filter alternative with configurable accuracy
-- **Rate Limiting**: Token bucket implementation with O(1) checks
-- **Deduplication**: Fast duplicate detection in data streams
-- **Graph Databases**: Adjacency list storage with perfect hashing
-- **Time-Series Index**: Fast timestamp to data mapping
+## Adding an algorithm
 
-## API Documentation
+One file in `include/maph/algorithms/`. Satisfy `perfect_hash_function`. Add `static_assert(perfect_hash_function<your_type>);`. Add tests modeled on `tests/v3/test_phobic.cpp`. Add a benchmark entry in `bench_phobic.cpp`. Done.
 
-### Core API
-
-```cpp
-// Create/Open operations
-static std::unique_ptr<Maph> create(path, total_slots, static_slots = 0);
-static std::unique_ptr<Maph> open(path, readonly = false);
-
-// Basic operations
-std::optional<JsonView> get(JsonView key);
-bool set(JsonView key, JsonView value);
-bool remove(JsonView key);
-bool exists(JsonView key);
-
-// Batch operations
-void mget(keys, callback);
-size_t mset(key_value_pairs);
-
-// Parallel operations
-void parallel_mget(keys, callback, threads = 0);
-size_t parallel_mset(pairs, threads = 0);
-void parallel_scan(visitor, threads = 0);
-
-// Utilities
-Stats stats();
-void sync();
-void close();
-```
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-Key areas for contribution:
-- Perfect hash function implementations
-- Additional decoders for specialized use cases
-- Language bindings (Python, Rust, Go, Java)
-- Performance optimizations
-- Documentation and examples
-
-## Publications
-
-The theoretical foundation for this work:
-
-```bibtex
-@inproceedings{rdphfilter2024,
-  title={Rate-Distorted Perfect Hash Filters},
-  author={...},
-  booktitle={...},
-  year={2024}
-}
-```
+See `CLAUDE.md` for a more detailed developer guide, `docs/OPTIMIZATION_NOTES.md` for what's left to improve.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-Built on research in perfect hash functions, approximate data structures, and space-efficient algorithms. Special thanks to the authors of CHD, BBHash, and other minimal perfect hash algorithms that inspired this work.
+MIT.
