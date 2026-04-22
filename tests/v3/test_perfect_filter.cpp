@@ -4,8 +4,8 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <maph/perfect_filter.hpp>
-#include <maph/phobic.hpp>
+#include <maph/composition/perfect_filter.hpp>
+#include <maph/algorithms/phobic.hpp>
 #include <random>
 #include <algorithm>
 #include <cmath>

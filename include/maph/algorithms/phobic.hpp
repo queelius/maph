@@ -17,8 +17,9 @@
 
 #pragma once
 
-#include "phf_concept.hpp"
-#include "hashers_perfect.hpp"  // PERFECT_HASH_MAGIC, PERFECT_HASH_VERSION
+#include "../core.hpp"
+#include "../concepts/perfect_hash_function.hpp"
+#include "../detail/serialization.hpp"
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -329,5 +330,9 @@ public:
 using phobic5 = phobic_phf<5>;
 using phobic3 = phobic_phf<3>;
 using phobic7 = phobic_phf<7>;
+
+// ===== STATIC ASSERTIONS =====
+
+static_assert(perfect_hash_function<phobic_phf<5>>);
 
 } // namespace maph

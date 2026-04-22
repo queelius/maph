@@ -1,5 +1,5 @@
 /**
- * @file phf_concept.hpp
+ * @file perfect_hash_function.hpp
  * @brief Concepts for perfect hash functions and their builders
  *
  * Defines the interface that all perfect hash function implementations
@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "core.hpp"
+#include "../core.hpp"
 #include <string_view>
 #include <vector>
 #include <span>

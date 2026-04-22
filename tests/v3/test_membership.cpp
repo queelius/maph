@@ -4,8 +4,9 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <maph/membership.hpp>
-#include <maph/hashers_perfect.hpp>
+#include <maph/filters/packed_fingerprint.hpp>
+#include <maph/detail/fingerprint_hash.hpp>
+#include <maph/algorithms/recsplit.hpp>
 #include <random>
 #include <algorithm>
 #include <cmath>

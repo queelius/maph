@@ -4,7 +4,7 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <maph/phf_concept.hpp>
+#include <maph/concepts/perfect_hash_function.hpp>
 #include <optional>
 
 using namespace maph;

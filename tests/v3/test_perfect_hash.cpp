@@ -4,9 +4,13 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <maph/hashers_perfect.hpp>
-#include <maph/phf_concept.hpp>
-#include <maph/perfect_filter.hpp>
+#include <maph/concepts/perfect_hash_function.hpp>
+#include <maph/algorithms/recsplit.hpp>
+#include <maph/algorithms/chd.hpp>
+#include <maph/algorithms/bbhash.hpp>
+#include <maph/algorithms/fch.hpp>
+#include <maph/algorithms/pthash.hpp>
+#include <maph/composition/perfect_filter.hpp>
 #include <random>
 #include <algorithm>
 #include <set>

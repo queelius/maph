@@ -1,42 +1,28 @@
 /**
- * @file membership.hpp
- * @brief Membership verification via packed fingerprint arrays
+ * @file packed_fingerprint.hpp
+ * @brief Packed fingerprint array for compact membership verification.
  *
- * Provides packed_fingerprint_array for verifying that a queried key
- * belongs to the original build set, using compact k-bit fingerprints.
+ * Stores a k-bit fingerprint per slot in a tightly packed bit array.
+ * Combined with a perfect hash function in composition/perfect_filter.hpp
+ * to form an approximate map.
  */
 
 #pragma once
 
-#include "core.hpp"
-#include <vector>
+#include "../core.hpp"
+#include "../detail/fingerprint_hash.hpp"
+#include <array>
+#include <bit>
 #include <cstdint>
 #include <cstring>
-#include <span>
-#include <string_view>
-#include <optional>
 #include <functional>
-#include <bit>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace maph {
-
-// ===== COMMON FINGERPRINT HASH =====
-
-// Independent hash for fingerprinting (must differ from perfect hash internals).
-// SplitMix64 finalization applied to FNV-1a.
-inline uint64_t membership_fingerprint(std::string_view key) noexcept {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (unsigned char c : key) {
-        h ^= c;
-        h *= 0x100000001b3ULL;
-    }
-    h ^= h >> 30;
-    h *= 0xbf58476d1ce4e5b9ULL;
-    h ^= h >> 27;
-    h *= 0x94d049bb133111ebULL;
-    h ^= h >> 31;
-    return h;
-}
 
 /**
  * @class packed_fingerprint_array

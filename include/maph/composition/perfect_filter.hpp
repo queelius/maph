@@ -12,8 +12,13 @@
 
 #pragma once
 
-#include "phf_concept.hpp"
-#include "membership.hpp"
+#include "../core.hpp"
+#include "../concepts/perfect_hash_function.hpp"
+#include "../filters/packed_fingerprint.hpp"
+#include <array>
+#include <bit>
+#include <cstring>
+#include <span>
 #include <vector>
 #include <string>
 #include <string_view>

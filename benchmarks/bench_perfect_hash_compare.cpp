@@ -4,8 +4,12 @@
  */
 
 #include <maph/core.hpp>
-#include <maph/hashers_perfect.hpp>
-#include <maph/phobic.hpp>
+#include <maph/algorithms/recsplit.hpp>
+#include <maph/algorithms/chd.hpp>
+#include <maph/algorithms/bbhash.hpp>
+#include <maph/algorithms/fch.hpp>
+#include <maph/algorithms/pthash.hpp>
+#include <maph/algorithms/phobic.hpp>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
