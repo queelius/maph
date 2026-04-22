@@ -41,3 +41,6 @@ maph_add_benchmark(bench_partitioned_sweep)
 
 # Compare inner PHF algorithms under partitioned_phf.
 maph_add_benchmark(bench_partitioned_algos)
+
+# Retrieval grid: ribbon vs phf_value_array across value widths.
+maph_add_benchmark(bench_retrieval)
