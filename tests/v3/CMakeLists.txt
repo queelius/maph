@@ -46,6 +46,7 @@ set(MAPH_TEST_SOURCES
     test_partitioned.cpp
     test_retrieval.cpp
     test_encoded_retrieval.cpp
+    test_binary_fuse.cpp
 )
 
 set(MAPH_TEST_TARGETS "")

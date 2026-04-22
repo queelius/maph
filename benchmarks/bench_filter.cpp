@@ -20,8 +20,9 @@
 
 #include "bench_harness.hpp"
 
-#include <maph/filters/xor_filter.hpp>
+#include <maph/filters/binary_fuse_filter.hpp>
 #include <maph/filters/ribbon_filter.hpp>
+#include <maph/filters/xor_filter.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -203,12 +204,30 @@ int main(int argc, char** argv) {
             std::cout.flush();
         };
 
+        auto run_binary_fuse = [&](auto tag, unsigned bits) {
+            using F = binary_fuse_filter<decltype(tag)::value>;
+            std::cerr << "  binary_fuse<" << bits << "> ..." << std::flush;
+            auto r = run_oracle<F>(
+                "binary_fuse", bits, keys, unknowns,
+                [&](F& o) { return o.build(keys); },
+                total_queries);
+            if (r.ok) std::cerr << " " << r.build_ms << "ms, " << r.bits_per_key
+                                << " b/k, " << r.query_median_ns << " ns/q, fp="
+                                << r.fp_rate << "\n";
+            else      std::cerr << " BUILD FAILED\n";
+            print_tsv_row(std::cout, r);
+            std::cout.flush();
+        };
+
         run_xor(std::integral_constant<unsigned, 8>{}, 8);
         run_xor(std::integral_constant<unsigned, 16>{}, 16);
         run_xor(std::integral_constant<unsigned, 32>{}, 32);
         run_ribbon(std::integral_constant<unsigned, 8>{}, 8);
         run_ribbon(std::integral_constant<unsigned, 16>{}, 16);
         run_ribbon(std::integral_constant<unsigned, 32>{}, 32);
+        run_binary_fuse(std::integral_constant<unsigned, 8>{}, 8);
+        run_binary_fuse(std::integral_constant<unsigned, 16>{}, 16);
+        run_binary_fuse(std::integral_constant<unsigned, 32>{}, 32);
     }
     return 0;
 }
