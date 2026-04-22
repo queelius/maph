@@ -35,3 +35,9 @@ maph_add_benchmark(bench_phobic_parallel)
 
 # Large-scale partitioned PHOBIC (1M, 10M keys).
 maph_add_benchmark(bench_scale)
+
+# Shard-count x thread-count sweep for partitioned_phf<phobic5>.
+maph_add_benchmark(bench_partitioned_sweep)
+
+# Compare inner PHF algorithms under partitioned_phf.
+maph_add_benchmark(bench_partitioned_algos)
