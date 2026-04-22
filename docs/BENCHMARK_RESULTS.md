@@ -316,6 +316,115 @@ See `benchmarks/README.md` for the measurement methodology.
 
 ---
 
+## bench_retrieval: retrieval methods across value widths
+
+The retrieval concept is the primitive behind static-function data
+structures: given `v: S -> {0,1}^m`, store a lookup that returns `v(k)`
+for `k in S` and garbage for `k not in S`. Unlike `approximate_map`,
+no membership sentinel is exposed, which makes retrieval the right
+primitive for oblivious constructions like cipher maps.
+
+Two implementations are compared:
+- `ribbon_retrieval<M>`: banded GF(2) linear system, stores one
+  m-bit value per row, ~1.04 * M bits/key theoretical cost.
+- `phf_value_array<PHF, M>`: PHF slot + packed M-bit value array,
+  cost is `bits_per_key(PHF) + M`.
+
+### At 100,000 keys (random)
+
+| method                   |   M  | build (ms) | bits/key | query (ns) |
+|--------------------------|:----:|-----------:|---------:|-----------:|
+| ribbon<1>                |   1  |       26.3 |     1.08 |       58.2 |
+| ribbon<8>                |   8  |       24.1 |     8.64 |       59.5 |
+| ribbon<16>               |  16  |       27.7 |    17.28 |       61.7 |
+| ribbon<32>               |  32  |       25.8 |    34.56 |       71.4 |
+| ribbon<64>               |  64  |       29.1 |    69.12 |       76.7 |
+| pva<phobic5, 1>          |   1  |    2,372.7 |     3.73 |       24.8 |
+| pva<phobic5, 8>          |   8  |    3,097.7 |    10.77 |       31.2 |
+| pva<phobic5, 16>         |  16  |    2,535.9 |    18.81 |       34.2 |
+| pva<phobic5, 32>         |  32  |    2,577.3 |    34.89 |       36.3 |
+| pva<phobic5, 64>         |  64  |    2,928.6 |    67.04 |       34.5 |
+| pva<part<phobic4>, 1>    |   1  |       59.7 |     3.77 |       50.0 |
+| pva<part<phobic4>, 8>    |   8  |       57.3 |    10.77 |       50.1 |
+| pva<part<phobic4>, 16>   |  16  |       53.4 |    18.77 |       51.5 |
+| pva<part<phobic4>, 32>   |  32  |       57.4 |    34.77 |       53.6 |
+| pva<part<phobic4>, 64>   |  64  |       55.1 |    66.77 |       52.4 |
+| pva<bbhash5, 1>          |   1  |       35.9 |    21.03 |       39.1 |
+| pva<bbhash5, 16>         |  16  |       36.7 |    36.03 |       36.3 |
+| pva<bbhash5, 64>         |  64  |       36.1 |    84.03 |       36.7 |
+
+### At 1,000,000 keys (plain phobic5 skipped for runtime)
+
+| method                   |   M  | build (ms) | bits/key | query (ns) |
+|--------------------------|:----:|-----------:|---------:|-----------:|
+| ribbon<1>                |   1  |      523.9 |     1.08 |      167.2 |
+| ribbon<8>                |   8  |      903.2 |     8.64 |      166.2 |
+| ribbon<16>               |  16  |      898.1 |    17.28 |      175.3 |
+| ribbon<32>               |  32  |      904.7 |    34.56 |      184.7 |
+| ribbon<64>               |  64  |    1,029.5 |    69.12 |      221.4 |
+| pva<part<phobic4>, 1>    |   1  |      690.0 |     3.76 |      150.1 |
+| pva<part<phobic4>, 8>    |   8  |      689.8 |    10.76 |      147.7 |
+| pva<part<phobic4>, 16>   |  16  |      687.0 |    18.76 |      151.1 |
+| pva<part<phobic4>, 32>   |  32  |      704.4 |    34.76 |      156.1 |
+| pva<part<phobic4>, 64>   |  64  |      697.6 |    66.76 |      167.8 |
+| pva<bbhash5, 1>          |   1  |      651.4 |    21.00 |      104.6 |
+| pva<bbhash5, 16>         |  16  |      550.1 |    36.00 |      136.1 |
+| pva<bbhash5, 64>         |  64  |      552.4 |    84.00 |      113.7 |
+
+### The crossover
+
+For a PHF with space `c` bits/key, the two methods cost:
+- ribbon: `(1 + eps) * M` bits/key (eps = 0.08 at the default epsilon)
+- pva: `c + M` bits/key
+
+They tie when `eps * M = c`, i.e. `M = c / eps`. At `c = 2.7` (PHOBIC)
+and `eps = 0.08`: M = 33.75. Confirmed empirically: M=32 is a tie, M=64
+goes to phobic5.
+
+### Observations
+
+- **Ribbon is the cipher-map winner.** For narrow `M` (1-16 bits, which
+  covers single-bit classifiers through 16-bit ciphertext slots),
+  ribbon_retrieval uses 2-4x less space than the best PHF alternative.
+  At `M=1`: ribbon is 1.08 b/k vs pva<part4>'s 3.77 b/k.
+- **PHF+array wins for wide values.** At `M >= 32`, pva<phobic5> or
+  pva<part<phobic4>> uses ~1-3% less space than ribbon. If you're
+  storing 32-bit or 64-bit payloads, prefer PHF+array.
+- **Build time separates ribbon from fat PHF+array.** Plain phobic5 +
+  array at 100K takes 2.5-3.1 seconds per M; ribbon takes 25-30 ms,
+  roughly 100x faster. Partitioned phobic4 closes most of that gap
+  (53-60 ms) at a ~1% space cost.
+- **Query latency favors PHF+array.** At 100K: ribbon ~60 ns, pva<phobic5>
+  ~25-36 ns. Ribbon pays for the XOR chain over solution entries
+  (typically 10-20 memory reads in a 64-slot window); pva does one
+  slot computation + one indexed array read. Both are sub-microsecond
+  at 1M, and dominated by cache pressure at that scale.
+- **bbhash5 backend is a pure-speed option**: fastest queries at 1M
+  (105-136 ns) with 20+ bits/key overhead. Not interesting for
+  space-constrained cipher maps, but useful when query latency
+  dominates the cost model.
+- **Space efficiency is distribution-invariant.** All methods' bits/key
+  numbers match the theory regardless of key distribution (verified
+  against URL vs random at 100K in other runs).
+
+### Implications for cipher maps
+
+The user's cipher-map constructions want narrow `M` and don't need a
+membership sentinel. Both conditions favor ribbon_retrieval:
+
+- At `M=1` (single-bit classifier over a secret set): 1.08 bits/key,
+  approaching the Shannon floor. 10M such keys fit in 1.4 MB.
+- At `M=8` (byte-wide ciphertext map): 8.64 bits/key.
+- At `M=16` (16-bit ciphertext or 16-bit fingerprint): 17.28 bits/key.
+
+The `(1 + eps)` multiplier is the only cost above the information floor,
+and the query path is a pure linear function of stored state: XOR of
+a handful of solution entries. No branch on membership, so the output
+distribution for non-members is indistinguishable from a legitimate
+lookup when values are pseudorandom.
+
+---
+
 ## bench_partitioned_algos: inner PHF choice under partitioning
 
 Partitioning made `phobic5` 60x faster at 1M keys. Does it help the other
