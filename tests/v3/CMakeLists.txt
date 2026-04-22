@@ -44,6 +44,7 @@ set(MAPH_TEST_SOURCES
     test_perfect_filter.cpp
     test_membership.cpp
     test_partitioned.cpp
+    test_retrieval.cpp
 )
 
 set(MAPH_TEST_TARGETS "")
