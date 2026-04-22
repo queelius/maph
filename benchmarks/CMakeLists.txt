@@ -20,3 +20,12 @@ endfunction()
 
 # Core perfect_hash_function benchmark: all PHF algorithms, all key scales.
 maph_add_benchmark(bench_phf)
+
+# Parameter sweep for PHOBIC bucket_size, RecSplit leaf_size, BBHash gamma.
+maph_add_benchmark(bench_phf_sweep)
+
+# membership_oracle benchmark: xor_filter, ribbon_filter at 8/16/32 bits.
+maph_add_benchmark(bench_filter)
+
+# approximate_map benchmark: perfect_filter<PHF, FPBits> variants.
+maph_add_benchmark(bench_approximate_map)

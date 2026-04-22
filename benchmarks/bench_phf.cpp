@@ -58,11 +58,14 @@ result_row run_algo(const std::string& name,
     r.algorithm = name;
     r.key_count = keys.size();
     r.ok = false;
+    r.fp_rate = 0.0;  // pure PHF has no FP semantics
 
+    reset_peak_rss();
     auto t0 = clock::now();
     auto built = make_builder().add_all(keys).build();
     auto t1 = clock::now();
     r.build_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0;
+    r.build_peak_rss_kb = get_peak_rss_kb();
 
     if (!built.has_value()) return r;
     auto& phf = built.value();

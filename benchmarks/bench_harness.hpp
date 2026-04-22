@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -57,6 +59,34 @@ inline std::vector<std::string> gen_random_keys(size_t count, uint64_t seed = 42
     std::sort(keys.begin(), keys.end());
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
     return keys;
+}
+
+// ===== PEAK RSS (Linux) =====
+//
+// Reads VmHWM (peak resident set size) from /proc/self/status. Returns 0 on
+// non-Linux or on read failure (benchmarks gracefully omit the column).
+//
+// Call reset_peak_rss() before a build to zero the high-water mark (via
+// /proc/self/clear_refs "5"), then get_peak_rss_kb() after the build to get
+// the build's peak memory. Works on Linux 2.6.22+ kernels.
+inline size_t get_peak_rss_kb() {
+    std::ifstream f("/proc/self/status");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.compare(0, 6, "VmHWM:") == 0) {
+            size_t kb = 0;
+            // Format: "VmHWM:\t  <number> kB"
+            for (char c : line) if (c >= '0' && c <= '9') kb = kb * 10 + (c - '0');
+            return kb;
+        }
+    }
+    return 0;
+}
+
+inline void reset_peak_rss() {
+    // Write "5" to clear_refs to reset VmHWM. See proc(5) / kernel docs.
+    std::ofstream f("/proc/self/clear_refs");
+    if (f) f << "5\n";
 }
 
 // ===== QUERY TIMING =====
@@ -146,18 +176,21 @@ struct result_row {
     size_t key_count;
     size_t range_size;
     double build_ms;
+    size_t build_peak_rss_kb;  // 0 if unavailable
     double bits_per_key;
     size_t memory_bytes;
     size_t serialized_bytes;
     double query_median_ns;
     double query_p99_ns;
     double query_mqps;
+    double fp_rate;  // empirical false-positive rate; 0 for pure PHF, NaN if not measured
     bool ok;
 };
 
 inline void print_tsv_header(std::ostream& os) {
-    os << "algorithm\tkeys\trange\tbuild_ms\tbits_per_key\tmem_bytes\t"
-          "ser_bytes\tquery_med_ns\tquery_p99_ns\tthroughput_mqps\tok\n";
+    os << "algorithm\tkeys\trange\tbuild_ms\tbuild_peak_kb\tbits_per_key\t"
+          "mem_bytes\tser_bytes\tquery_med_ns\tquery_p99_ns\tthroughput_mqps\t"
+          "fp_rate\tok\n";
 }
 
 inline void print_tsv_row(std::ostream& os, const result_row& r) {
@@ -166,12 +199,14 @@ inline void print_tsv_row(std::ostream& os, const result_row& r) {
        << r.key_count << '\t'
        << r.range_size << '\t'
        << std::setprecision(2) << r.build_ms << '\t'
+       << r.build_peak_rss_kb << '\t'
        << std::setprecision(3) << r.bits_per_key << '\t'
        << r.memory_bytes << '\t'
        << r.serialized_bytes << '\t'
        << std::setprecision(2) << r.query_median_ns << '\t'
        << r.query_p99_ns << '\t'
        << r.query_mqps << '\t'
+       << std::setprecision(10) << r.fp_rate << '\t'
        << (r.ok ? "1" : "0") << '\n';
 }
 
