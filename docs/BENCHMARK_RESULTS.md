@@ -201,52 +201,78 @@ BBHash-based compositions spend too much on the PHF for the FPR savings to
 matter. This is a direct justification for investing in PHOBIC construction
 performance: PHOBIC's low `c` is what makes the composition competitive.
 
+**Follow-up: with `partitioned_phf`, PHOBIC construction is no longer the
+bottleneck.** `partitioned_phf<phobic5>` builds 1M keys in 1.8 s on 8 cores
+(versus 107 s for serial phobic5). A
+`perfect_filter<partitioned_phf<phobic5>, 16>` inherits the fast build and
+pays a small `c` premium (2.86 vs 2.73 b/k), for a total around 18.9 b/k.
+Beating Bloom at FPR < 1.4% while building at about 2 seconds per million
+keys is the best single operating point in the whole space explored here.
+
 ---
 
-## bench_phobic_parallel: PHOBIC parallel build scaling
+## bench_phobic_parallel: PHOBIC parallel build strategies
 
-After the initial benchmarks flagged PHOBIC's build time as the main bottleneck,
-pilot search was parallelized via `.with_threads(N)`. Phase 1 (hashing, bucket
-assignment) and phase 2 (sorting buckets by size) stay serial; phase 3 (pilot
-search) uses atomic `fetch_or` on a shared bitset with per-bucket work stealing.
-`threads=1` runs the original sequential path; `threads=0` auto-detects.
+Four strategies are compared:
+- **serial**: `threads=1`, the original sequential algorithm
+- **fat+bucket**: `threads=N`, processes the top N largest buckets cooperatively
+  (all threads on disjoint pilot strides per bucket), then work-steals thin
+  buckets
+- **partitioned** N=T, S=auto: `partitioned_phf<phobic_K>` with auto shard
+  count (~`num_keys/15000`); each shard builds serially, shards execute in
+  parallel
 
-### Speedup at 1,000,000 keys
+### Speedup at 1,000,000 keys (8 cores)
 
-| config  | threads=1 (ms) | threads=2 | threads=4 | threads=8 | 8T speedup |
-|---------|---------------:|----------:|----------:|----------:|-----------:|
-| phobic3 |         23,348 |    15,356 |    12,414 |    11,033 |       2.12x |
-| phobic4 |         43,234 |    26,368 |    18,520 |    14,143 |       3.06x |
-| phobic5 |        102,230 |    77,097 |    46,407 |    **28,299** | **3.61x** |
+| strategy    | algo    | threads | build (ms) | bits/key | query (ns) | speedup |
+|-------------|---------|--------:|-----------:|---------:|-----------:|--------:|
+| serial      | phobic3 |       1 |    23,291  |    2.794 |        146 |    1.00x |
+| fat+bucket  | phobic3 |       8 |     9,866  |    2.796 |        148 |    2.36x |
+| **partitioned** | phobic3 |   8 |       **421** | 2.913 |        261 | **55.3x** |
+| serial      | phobic4 |       1 |    42,231  |    2.609 |        146 |    1.00x |
+| fat+bucket  | phobic4 |       8 |    13,698  |    2.610 |        150 |    3.08x |
+| **partitioned** | phobic4 |   8 |       **566** | 2.760 |        264 | **74.6x** |
+| serial      | phobic5 |       1 |   106,575  |    2.728 |        144 |    1.00x |
+| fat+bucket  | phobic5 |       8 |    27,779  |    2.727 |        149 |    3.84x |
+| **partitioned** | phobic5 |   8 |     **1,780** | 2.859 |        265 | **59.9x** |
 
-### Speedup at 100,000 keys
+### Speedup at 100,000 keys (8 cores)
 
-| config  | threads=1 (ms) | threads=2 | threads=4 | threads=8 | 8T speedup |
-|---------|---------------:|----------:|----------:|----------:|-----------:|
-| phobic3 |            105 |        42 |        72 |       577 |       0.18x |
-| phobic4 |            308 |       251 |       168 |        69 |       4.43x |
-| phobic5 |          9,338 |     5,657 |     3,518 |     2,504 |       3.73x |
+| strategy    | algo    | threads | build (ms) | bits/key | query (ns) | speedup |
+|-------------|---------|--------:|-----------:|---------:|-----------:|--------:|
+| serial      | phobic3 |       1 |       115  |    2.868 |         35 |    1.00x |
+| fat+bucket  | phobic3 |       4 |        71  |    2.871 |         36 |    1.61x |
+| partitioned | phobic3 |       8 |        27  |    2.926 |         89 |    4.26x |
+| serial      | phobic4 |       1 |       317  |    2.707 |         36 |    1.00x |
+| fat+bucket  | phobic4 |       4 |        49  |    2.716 |         52 |    6.47x |
+| partitioned | phobic4 |       8 |        42  |    2.769 |         65 |    7.61x |
+| serial      | phobic5 |       1 |     9,515  |    2.719 |         42 |    1.00x |
+| fat+bucket  | phobic5 |       8 |     2,458  |    2.720 |         35 |    3.87x |
+| **partitioned** | phobic5 |   8 |       **247** | 2.856 |         76 | **38.5x** |
 
 ### Observations
 
-- **PHOBIC5 at 1M went from 102 seconds to 28 seconds on 8 threads** (3.6x
-  speedup). This was the single biggest bottleneck called out by the initial
-  benchmarks, and it is materially resolved.
-- **Bits/key unchanged across thread counts** (2.72 for phobic5 at all T), so
-  correctness of the atomic claim/release protocol is confirmed by measurement
-  in addition to the unit tests.
-- **Query latency unchanged** (~235-245 ns for phobic5 at every thread count),
-  as expected: parallelism affects only construction.
-- **Threading overhead dominates at small scales for phobic3**. 100 ms of
-  sequential work + thread spawn/join costs + coordination yields a 0.18x
-  "speedup" at 8 threads. The 2048-key threshold keeps this from biting in
-  practice (it kicks in to sequential below that point), but even at 100K
-  phobic3's compute is too fine-grained to parallelize well.
-- **Scaling is sub-linear** (3.6x on 8 threads, not 8x). Likely causes: bucket
-  descending-size order means early buckets are larger, later buckets are
-  small, so workers finishing a large bucket may wait briefly on workers still
-  processing larger predecessors. Atomic bitset contention on hot cache lines
-  also plays a role.
+- **Partitioned is the clear winner for PHOBIC at scale.** `partitioned<phobic5>`
+  at 1M keys builds in 1.8 seconds with 8 threads, versus 107 seconds serial.
+  That is a **60x speedup** for the single most valuable algorithm in the
+  library.
+- **Speedup compounds with bucket size.** Partitioned helps most where serial
+  was worst: phobic5 goes from 107s to 1.8s (60x); phobic3 goes from 23s to
+  0.42s (55x); phobic4 goes from 42s to 0.57s (75x).
+- **Query cost of partitioning is about 2x.** Extra cost is one additional
+  hash to select the shard, then the inner PHF query. `phobic5` queries go
+  from 145 ns to 265 ns. Still sub-microsecond.
+- **Space cost of partitioning is 3-5%.** Extra bits/key come from per-shard
+  metadata (seed, sizes, buckets) and slightly higher pilot collision rates
+  in smaller shards. `phobic5`: 2.73 -> 2.86 b/k.
+- **fat+bucket is helpful but modest.** At 1M it doubles-to-quadruples
+  throughput but still trails partitioned by 10-50x. The straggler problem
+  is real: phase 3 finishes only when the slowest thread finishes the largest
+  remaining bucket, and cooperative fat-bucket processing only addresses the
+  top N_THREADS buckets.
+- **bits/key essentially unchanged across fat+bucket thread counts.** Confirms
+  the atomic claim/release protocol's correctness end-to-end (in addition to
+  the unit tests).
 
 ## Methodology caveats
 
