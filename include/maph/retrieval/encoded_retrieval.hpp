@@ -154,6 +154,13 @@ public:
             return *this;
         }
 
+        // Forward padded_phf's padding knob through the chain.
+        builder& with_padding(uint64_t factor)
+            requires requires(typename Retrieval::builder& b) { b.with_padding(factor); } {
+            rbuilder_.with_padding(factor);
+            return *this;
+        }
+
         [[nodiscard]] result<encoded_retrieval> build() {
             // If the codec exposes a default pattern and the base
             // retrieval builder supports a fill pattern for unused

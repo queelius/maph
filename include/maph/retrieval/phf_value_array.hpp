@@ -158,6 +158,14 @@ public:
         // landing in unused slots produce the intended default.
         builder& with_fill_pattern(value_type p) { fill_pattern_ = p; return *this; }
 
+        // Forward padded_phf's padding knob when present. Same pattern
+        // as with_seed and with_threads: opt-in via requires-clauses.
+        builder& with_padding(uint64_t factor)
+            requires requires(typename PHF::builder& b) { b.with_padding(factor); } {
+            phf_builder_.with_padding(factor);
+            return *this;
+        }
+
         [[nodiscard]] result<phf_value_array> build() {
             auto built = phf_builder_.build();
             if (!built.has_value()) return std::unexpected(built.error());
