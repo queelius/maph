@@ -239,6 +239,11 @@ int main(int argc, char** argv) {
     std::string dist = args.get_string("distribution", "random");
     size_t total_queries = args.get_size("queries", 500'000);
     size_t threads = args.get_size("threads", 8);
+    // Serial PHOBIC build is O(n) expected with super-linear pilot search per
+    // bucket, so at N > ~200K the plain phobic5 path dominates total runtime.
+    // The partitioned phobic4 rows cover the same operating point at a fraction
+    // of the cost, so we skip plain phobic5 above this threshold by default.
+    size_t plain_phobic_max = args.get_size("max_plain_phobic_keys", 200'000);
 
     std::cerr << "bench_retrieval: value-width sweep\n"
               << "  distribution: " << dist << "\n"
@@ -263,11 +268,16 @@ int main(int argc, char** argv) {
 
         std::cout << '\n';
 
-        print_row(run_phf_array<phobic5, 1>("phobic5", keys, total_queries, threads));
-        print_row(run_phf_array<phobic5, 8>("phobic5", keys, total_queries, threads));
-        print_row(run_phf_array<phobic5, 16>("phobic5", keys, total_queries, threads));
-        print_row(run_phf_array<phobic5, 32>("phobic5", keys, total_queries, threads));
-        print_row(run_phf_array<phobic5, 64>("phobic5", keys, total_queries, threads));
+        if (kc <= plain_phobic_max) {
+            print_row(run_phf_array<phobic5, 1>("phobic5", keys, total_queries, threads));
+            print_row(run_phf_array<phobic5, 8>("phobic5", keys, total_queries, threads));
+            print_row(run_phf_array<phobic5, 16>("phobic5", keys, total_queries, threads));
+            print_row(run_phf_array<phobic5, 32>("phobic5", keys, total_queries, threads));
+            print_row(run_phf_array<phobic5, 64>("phobic5", keys, total_queries, threads));
+        } else {
+            std::cerr << "  skipping plain phobic5 (N=" << kc
+                      << " > " << plain_phobic_max << "); use partitioned rows\n";
+        }
 
         std::cout << '\n';
 
