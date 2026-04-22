@@ -1,31 +1,58 @@
 # maph benchmark suite
 
-Four benchmarks, each aligned with one of the library's concepts:
+Eight benchmarks, each aligned with one axis of the library's concept space:
 
-| Benchmark | Concept | What it compares |
-|-----------|---------|------------------|
+| Benchmark | Concept / Focus | What it compares |
+|-----------|-----------------|------------------|
 | `bench_phf` | `perfect_hash_function` | All PHF implementations at multiple key scales |
 | `bench_phf_sweep` | `perfect_hash_function` | Parameter sweeps within one algorithm family |
 | `bench_filter` | `membership_oracle` | Standalone approximate-membership structures |
 | `bench_approximate_map` | `approximate_map` | PHF + fingerprint compositions |
+| `bench_phobic_parallel` | PHOBIC build scaling | Thread counts 1/2/4/8 across phobic3/4/5 |
+| `bench_scale` | Partitioned large-scale | `partitioned_phf<phobic5>` at 1M, 10M |
+| `bench_partitioned_sweep` | Partitioning parameter | Shard count x thread count sweep |
+| `bench_partitioned_algos` | Partitioning inner-PHF | `partitioned_phf<Inner>` varying Inner |
 
 All benchmarks share `bench_harness.hpp` and emit TSV to stdout, progress to stderr.
 
 ## Build
 
 ```bash
-cmake -DBUILD_BENCHMARKS=ON .. && make -j bench_phf bench_phf_sweep bench_filter bench_approximate_map
+cmake -DBUILD_BENCHMARKS=ON .. && make -j bench_phf bench_phf_sweep bench_filter bench_approximate_map \
+    bench_phobic_parallel bench_scale bench_partitioned_sweep bench_partitioned_algos
 ```
 
 ## Usage
 
+Newer benchmarks accept `--key=value` CLI arguments; older ones take positional
+key counts:
+
 ```bash
+# Positional-args style (older benchmarks)
 ./bench_phf                         # default: 10K 100K 1M
 ./bench_phf 1000 10000              # custom key counts
 ./bench_filter 10000 100000         # filter benchmark
 ./bench_approximate_map 10000       # composition benchmark
 ./bench_phf_sweep 50000             # parameter sweep at 50K keys
+
+# Flag-args style (newer benchmarks)
+./bench_partitioned_sweep --keys=1000000 --threads=8 --shards=128,256,512
+./bench_partitioned_sweep --keys=10000000 --distribution=url --queries=300000
+./bench_partitioned_algos --keys=1000000 --threads=8
 ```
+
+## Key distributions
+
+`bench_harness.hpp` exposes four synthetic distributions via
+`gen_keys_by_name(name, count)`:
+
+- `random`: 16-byte printable-ASCII from a fixed seed. Default.
+- `sequential`: zero-padded decimal strings. Tests hash quality on structured keys.
+- `url`: synthetic URL-like strings with common prefixes and hosts.
+- `variable`: random-length keys (4..64 bytes). Tests amortized hashing cost.
+
+Algorithms whose hash quality is distribution-sensitive (e.g., weak inner
+hashes) will show most variation between `random` and `sequential`.
 
 ## Measurement methodology
 

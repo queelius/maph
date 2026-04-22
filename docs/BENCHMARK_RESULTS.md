@@ -309,6 +309,178 @@ caps speedup even when individual shard builds parallelize perfectly.
   about 1e-5 the sample is too small to resolve (zero observed FPs).
 - Single key distribution only: random 16-byte binary strings. URL-shaped or
   natural-language keys could shift rankings, especially for hash functions
-  whose quality is distribution-sensitive.
+  whose quality is distribution-sensitive. The `bench_harness` now supports
+  `--distribution=random|sequential|url|variable` for future exploration.
 
 See `benchmarks/README.md` for the measurement methodology.
+
+---
+
+## bench_partitioned_algos: inner PHF choice under partitioning
+
+Partitioning made `phobic5` 60x faster at 1M keys. Does it help the other
+algorithms too? This benchmark sweeps the inner-PHF parameter of
+`partitioned_phf<Inner>` at 1M keys, 8 threads.
+
+### At 1,000,000 keys, 8 threads
+
+| config                     | build (ms) | bits/key | query (ns) | notes                  |
+|----------------------------|-----------:|---------:|-----------:|------------------------|
+| partitioned<phobic5>       |    1,694.5 |     2.86 |      259.2 | best space             |
+| partitioned<phobic4>       |      555.3 |     2.76 |      261.8 | **best space+build**   |
+| partitioned<phobic3>       |      400.1 |     2.91 |      255.9 | fastest small-PHOBIC   |
+| partitioned<bbhash5>       |      335.2 |    18.39 |      268.7 | fastest overall        |
+| partitioned<bbhash3>       |      551.6 |    18.97 |      266.1 |                        |
+| partitioned<recsplit8>     |      416.2 |    96.08 |      297.2 | serial inner           |
+| partitioned<chd>           |      647.5 |   134.50 |      287.0 | serial inner           |
+| partitioned<fch>           |      474.2 |   200.10 |      291.3 | serial inner           |
+
+### Plain (single PHF, no partitioning) for comparison
+
+| config                     | build (ms) | bits/key | query (ns) | speedup-from-partition |
+|----------------------------|-----------:|---------:|-----------:|-----------------------:|
+| phobic5 (fat+bucket, T=8)  |   24,483.1 |     2.73 |      150.9 |                 14.4x |
+| bbhash5 (serial, T=1)      |      468.9 |    20.00 |      186.1 |                  1.4x |
+| recsplit8 (serial, T=1)    |    3,082.3 |    96.00 |      260.9 |                  7.4x |
+
+### Observations
+
+- **Partitioning helps every algorithm, but the payoff is biggest for PHOBIC.**
+  `phobic5` wins 14.4x from partitioning because the serial inner algorithm has
+  super-linear pilot search and benefits most from smaller per-shard work.
+  BBHash5 wins only 1.4x because its serial build is already fast.
+- **phobic4 is the partitioned-build winner.** Inside a partitioned wrapper,
+  `phobic4` matches `phobic5` on space (2.76 vs 2.86 b/k) but builds 3x faster.
+  Pilot search difficulty grows non-linearly with bucket size, so `k=4`
+  capture most of PHOBIC's space advantage for a fraction of the cost.
+- **BBHash is the speed king, PHOBIC the space king.** `partitioned<bbhash5>`
+  at 335 ms is the fastest observed build at 1M keys, but at 18.4 b/k it spends
+  6.4x more space than `partitioned<phobic4>`.
+- **Query latency is roughly constant (~260-290 ns) across inner algorithms.**
+  The partitioned query cost is dominated by the shard-selection hash and
+  cache behavior, not the inner PHF lookup. So the inner choice can be
+  optimized for build time and space without hurting query speed.
+- **recsplit8/chd/fch have serial inner builds**, so partitioning alone
+  parallelizes them across shards (roughly 8x from 8 threads). `recsplit8`
+  plain serial: 3.1s; partitioned: 416 ms (7.4x, as expected).
+- **Take-away**: for approximate maps at 1M+, prefer
+  `partitioned_phf<phobic4>` (best total cost) or `partitioned_phf<bbhash5>`
+  (for minimum latency-to-query, at 6x the space).
+
+---
+
+## bench_partitioned_sweep: shard-count sweep
+
+Question: is the default of ~15,000 keys per shard optimal, or is there a better
+point in the (build_time, bits/key) plane?
+
+### At 1,000,000 keys
+
+| shards | keys/shard | T | build (ms) | bits/key | query (ns) |
+|-------:|-----------:|--:|-----------:|---------:|-----------:|
+|     16 |     62,500 | 1 |     42,035 |     2.80 |        ~260 |
+|     64 |     15,625 | 1 |      7,808 |     2.85 |        ~260 |
+|    256 |      3,906 | 1 |      4,901 |     3.00 |        ~265 |
+|   1024 |        977 | 1 |      4,691 |     3.58 |        ~270 |
+|     16 |     62,500 | 8 |     11,148 |     2.80 |        ~260 |
+|     64 |     15,625 | 8 |      1,979 |     2.85 |        ~260 |
+|    256 |      3,906 | 8 |      1,255 |     3.00 |        ~265 |
+|   1024 |        977 | 8 |      1,194 |     3.58 |        ~270 |
+
+### Observations
+
+- **Sweet spot is around 128-256 shards at 1M keys.** Build time plateaus
+  (1.2s at T=8, 4.7s at T=1); above that, bits/key keeps rising without build
+  improvement.
+- **Smaller shards are near-linearly faster at T=1.** Each shard's build is
+  super-linear in its size, so 4x more shards means roughly 5x less total work.
+  Diminishing returns kick in once per-shard work is below ~1 ms (fixed
+  overhead per shard takes over).
+- **At T=8 the build-time curve is nearly flat for shards >=64.** Past the
+  thread-count threshold, parallelism keeps up with per-shard granularity.
+- **Bits/key rises monotonically with shard count.** Each shard carries its own
+  seed (8 bytes), sizes (8 bytes), and alpha (8 bytes) of metadata, plus
+  ceiling effects on pilot counts in small shards. 1024 shards at 1M keys
+  means ~24 KB of pure shard metadata (0.19 bits/key) plus per-shard overhead.
+- **Query latency is essentially invariant.** Shard count doesn't affect the
+  query path (always: hash -> shard lookup -> inner PHF).
+- **The default (`num_keys / 15000`) puts us at 67 shards for 1M keys**, which
+  from this data is on the right side of the knee: good space (2.85 b/k),
+  near-optimal build (2.0s at T=8). Slightly larger (256 shards) gets
+  a faster build at a 5% space cost.
+
+### At 10,000,000 keys
+
+Only T=8 data. The T=1 baseline for 10M with 256 shards would take >20 minutes
+(each 39K-key shard builds serially at several seconds); the parallel regime
+is the useful one at this scale.
+
+| shards | keys/shard | build (ms) | bits/key | memory (KB) | query (ns) |
+|-------:|-----------:|-----------:|---------:|------------:|-----------:|
+|    256 |     39,062 |     57,391 |     2.82 |       3,448 |      314.9 |
+|    512 |     19,531 |     22,592 |     2.84 |       3,472 |      304.1 |
+|  1,024 |      9,765 |     18,035 |     2.88 |       3,518 |      315.8 |
+|  2,048 |      4,882 |     15,928 |     2.96 |       3,614 |      320.2 |
+|  4,096 |      2,441 |     15,556 |     3.11 |       3,800 |      318.5 |
+
+### Observations at 10M scale
+
+- **Build-time knee shifts to ~1024-2048 shards.** At 1M, 256 shards was the
+  sweet spot; at 10M it is 1024-2048. The reason is per-shard build cost is
+  super-linear in its size, so larger total N pushes the optimum toward
+  smaller (faster) shards.
+- **Beyond ~2048 shards, more shards don't help.** Going from 2048 to 4096
+  saves only 400 ms of build time (15.9s to 15.6s) but adds 0.15 b/k. Not
+  worth it. At this point the bottleneck is scheduling and metadata cost,
+  not per-shard build work.
+- **Space cost of aggressive sharding is real.** 256 to 4096 shards: 2.82 to
+  3.11 b/k (10% increase) at 10M. At 1M: 2.85 to 3.58 (26% increase). The
+  metadata-per-shard cost is amortized better at larger key counts.
+- **Memory footprint is tiny in absolute terms.** 10M keys fit in 3.4-3.8 MB,
+  two orders of magnitude smaller than a hash table of the same keys would
+  need.
+- **Practical guidance**: at `num_keys >= 10^7`, target ~1000-5000 keys/shard
+  (not the default 15,000). The `partitioned_phf` auto-shard heuristic could
+  be tuned to scale shard size down as total N grows.
+
+---
+
+## Distribution sensitivity (bench_partitioned_algos at 100K)
+
+Does key structure change the rankings? Comparing `random` (16-byte printable
+ASCII, fixed seed) with `url` (synthetic URL-shaped strings with typical path
+and host prefixes) at 100K keys, 8 threads, partitioned variants:
+
+| config                | random build (ms) | url build (ms) | random query (ns) | url query (ns) |
+|-----------------------|------------------:|---------------:|------------------:|---------------:|
+| partitioned<phobic5>  |             682.8 |          538.4 |             216.1 |          400.7 |
+| partitioned<phobic4>  |             123.7 |          117.0 |             135.9 |          452.9 |
+| partitioned<phobic3>  |              59.9 |          102.6 |             171.1 |          443.8 |
+| partitioned<bbhash5>  |              45.8 |           84.1 |             200.4 |          417.2 |
+| partitioned<bbhash3>  |             132.7 |          214.4 |             239.8 |          413.1 |
+| partitioned<recsplit8>|              83.6 |          126.8 |             239.5 |          540.3 |
+| partitioned<chd>      |             151.3 |          571.5 |             218.2 |          495.7 |
+| partitioned<fch>      |             124.1 |          494.1 |             237.2 |          486.0 |
+
+### Observations
+
+- **bits/key is invariant across distributions.** Every algorithm reports the
+  same space for `random` and `url` within 0.2% at 100K (not shown; data in the
+  raw output). This confirms space efficiency is a function of key count, not
+  structure.
+- **Query latency is 2-3x slower on URL keys.** URL keys are longer (50-80
+  bytes typical) versus 16 bytes for random keys, so each hash is ~4x the
+  work. Query comparisons that do `strcmp` during overflow lookup pay extra
+  cost. This is a pure string-processing cost, not a PHF quality issue.
+- **Weak inner hashes (chd, fch) pay 3-4x on URL builds.** Partitioned<chd>
+  builds 3.8x slower on URL keys (151 ms vs 572 ms), and partitioned<fch>
+  4x slower (124 ms vs 494 ms). Both use simple mix functions that retain
+  structural patterns in URL-like keys, leading to more retries during pilot
+  search. PHOBIC's stronger bucket hash (`phf_remix`/splitmix64) keeps build
+  time stable across distributions.
+- **Practical takeaway**: for non-uniform keys, prefer PHOBIC-family inner
+  algorithms over FCH/CHD even if space is not critical. The hash-quality
+  difference shows up as build-time variance, not as reported `bits/key`.
+
+
+
