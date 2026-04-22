@@ -45,6 +45,7 @@ set(MAPH_TEST_SOURCES
     test_membership.cpp
     test_partitioned.cpp
     test_retrieval.cpp
+    test_encoded_retrieval.cpp
 )
 
 set(MAPH_TEST_TARGETS "")

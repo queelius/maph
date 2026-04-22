@@ -99,6 +99,7 @@ public:
     class builder {
         typename PHF::builder phf_builder_{};
         std::vector<std::pair<std::string, value_type>> pairs_{};
+        value_type fill_pattern_{0};  // Pattern written to unused slots
 
     public:
         builder() = default;
@@ -151,6 +152,12 @@ public:
             return *this;
         }
 
+        // Pattern written to unused slots (range_size > num_keys for
+        // non-minimal PHFs). For encoded_retrieval, set this to a pattern
+        // that decodes to the codec's default value so non-members
+        // landing in unused slots produce the intended default.
+        builder& with_fill_pattern(value_type p) { fill_pattern_ = p; return *this; }
+
         [[nodiscard]] result<phf_value_array> build() {
             auto built = phf_builder_.build();
             if (!built.has_value()) return std::unexpected(built.error());
@@ -158,6 +165,11 @@ public:
             phf_value_array out{};
             out.phf_ = std::move(*built);
             out.values_.resize(out.phf_.range_size());
+            if (fill_pattern_ != 0) {
+                for (size_t i = 0; i < out.phf_.range_size(); ++i) {
+                    out.values_.set(i, fill_pattern_);
+                }
+            }
 
             for (const auto& [k, v] : pairs_) {
                 auto slot = static_cast<size_t>(out.phf_.slot_for(k));
