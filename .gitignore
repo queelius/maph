@@ -173,3 +173,4 @@ integrations/rest_api/_deps/
 # Generated paper HTML
 docs/html_paper/
 
+.claude/

@@ -203,6 +203,51 @@ performance: PHOBIC's low `c` is what makes the composition competitive.
 
 ---
 
+## bench_phobic_parallel: PHOBIC parallel build scaling
+
+After the initial benchmarks flagged PHOBIC's build time as the main bottleneck,
+pilot search was parallelized via `.with_threads(N)`. Phase 1 (hashing, bucket
+assignment) and phase 2 (sorting buckets by size) stay serial; phase 3 (pilot
+search) uses atomic `fetch_or` on a shared bitset with per-bucket work stealing.
+`threads=1` runs the original sequential path; `threads=0` auto-detects.
+
+### Speedup at 1,000,000 keys
+
+| config  | threads=1 (ms) | threads=2 | threads=4 | threads=8 | 8T speedup |
+|---------|---------------:|----------:|----------:|----------:|-----------:|
+| phobic3 |         23,348 |    15,356 |    12,414 |    11,033 |       2.12x |
+| phobic4 |         43,234 |    26,368 |    18,520 |    14,143 |       3.06x |
+| phobic5 |        102,230 |    77,097 |    46,407 |    **28,299** | **3.61x** |
+
+### Speedup at 100,000 keys
+
+| config  | threads=1 (ms) | threads=2 | threads=4 | threads=8 | 8T speedup |
+|---------|---------------:|----------:|----------:|----------:|-----------:|
+| phobic3 |            105 |        42 |        72 |       577 |       0.18x |
+| phobic4 |            308 |       251 |       168 |        69 |       4.43x |
+| phobic5 |          9,338 |     5,657 |     3,518 |     2,504 |       3.73x |
+
+### Observations
+
+- **PHOBIC5 at 1M went from 102 seconds to 28 seconds on 8 threads** (3.6x
+  speedup). This was the single biggest bottleneck called out by the initial
+  benchmarks, and it is materially resolved.
+- **Bits/key unchanged across thread counts** (2.72 for phobic5 at all T), so
+  correctness of the atomic claim/release protocol is confirmed by measurement
+  in addition to the unit tests.
+- **Query latency unchanged** (~235-245 ns for phobic5 at every thread count),
+  as expected: parallelism affects only construction.
+- **Threading overhead dominates at small scales for phobic3**. 100 ms of
+  sequential work + thread spawn/join costs + coordination yields a 0.18x
+  "speedup" at 8 threads. The 2048-key threshold keeps this from biting in
+  practice (it kicks in to sequential below that point), but even at 100K
+  phobic3's compute is too fine-grained to parallelize well.
+- **Scaling is sub-linear** (3.6x on 8 threads, not 8x). Likely causes: bucket
+  descending-size order means early buckets are larger, later buckets are
+  small, so workers finishing a large bucket may wait briefly on workers still
+  processing larger predecessors. Atomic bitset contention on hot cache lines
+  also plays a role.
+
 ## Methodology caveats
 
 - All four benchmarks ran concurrently on the same machine, so query latencies

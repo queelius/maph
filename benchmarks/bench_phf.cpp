@@ -108,17 +108,21 @@ int main(int argc, char** argv) {
             return run_algo("phobic3", keys, [] { return phobic3::builder{}; }, q);
         }, /*max_keys=*/1'000'000'000},
 
+        // phobic7 does not build in minimal mode at any observed scale
+        // (pilot search exhausts retries). Kept in the algorithm list for
+        // documentation but capped low so the default sweep skips it.
         {"phobic7", [&](const auto& keys, size_t q) {
             return run_algo("phobic7", keys, [] { return phobic7::builder{}; }, q);
-        }, /*max_keys=*/1'000'000'000},
+        }, /*max_keys=*/1'000},
 
         {"recsplit8", [&](const auto& keys, size_t q) {
             return run_algo("recsplit8", keys, [] { return recsplit8::builder{}; }, q);
         }, /*max_keys=*/1'000'000'000},
 
+        // recsplit16 works at 10K but fails at 100K+. Cap accordingly.
         {"recsplit16", [&](const auto& keys, size_t q) {
             return run_algo("recsplit16", keys, [] { return recsplit16::builder{}; }, q);
-        }, /*max_keys=*/1'000'000'000},
+        }, /*max_keys=*/50'000},
 
         {"chd", [&](const auto& keys, size_t q) {
             return run_algo("chd", keys, [] { return chd_hasher::builder{}; }, q);

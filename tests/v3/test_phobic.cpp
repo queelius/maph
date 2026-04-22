@@ -201,3 +201,75 @@ TEST_CASE("phobic: bucket size 7", "[phobic]") {
     REQUIRE(phf.has_value());
     REQUIRE(verify_bijectivity(*phf, keys));
 }
+
+// ===== PARALLEL BUILD =====
+
+TEST_CASE("phobic: parallel build below threshold still succeeds", "[phobic][parallel]") {
+    // Below 2048 keys, with_threads(>1) falls back to sequential.
+    auto keys = make_keys(500);
+    auto phf = phobic5::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(phf.has_value());
+    REQUIRE(verify_bijectivity(*phf, keys));
+}
+
+TEST_CASE("phobic: parallel build produces valid PHF at scale", "[phobic][parallel]") {
+    // Above the threshold, parallel pilot search is used. Bijectivity must hold.
+    auto keys = make_keys(10000);
+
+    for (size_t threads : {size_t{2}, size_t{4}, size_t{8}}) {
+        auto phf = phobic5::builder{}
+            .add_all(keys)
+            .with_threads(threads)
+            .build();
+        REQUIRE(phf.has_value());
+        REQUIRE(verify_bijectivity(*phf, keys));
+        REQUIRE(phf->num_keys() == keys.size());
+    }
+}
+
+TEST_CASE("phobic: parallel build with threads=0 auto-detects", "[phobic][parallel]") {
+    auto keys = make_keys(10000);
+    auto phf = phobic5::builder{}.add_all(keys).with_threads(0).build();
+    REQUIRE(phf.has_value());
+    REQUIRE(verify_bijectivity(*phf, keys));
+}
+
+TEST_CASE("phobic: threads=1 matches unthreaded build exactly", "[phobic][parallel]") {
+    auto keys = make_keys(5000);
+
+    auto a = phobic5::builder{}.add_all(keys).with_seed(12345).build();
+    auto b = phobic5::builder{}.add_all(keys).with_seed(12345).with_threads(1).build();
+
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+
+    for (const auto& k : keys) {
+        REQUIRE(a->slot_for(k).value == b->slot_for(k).value);
+    }
+}
+
+TEST_CASE("phobic: parallel build works for phobic3 and phobic4 aliases", "[phobic][parallel]") {
+    auto keys = make_keys(10000);
+
+    auto p3 = phobic3::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(p3.has_value());
+    REQUIRE(verify_bijectivity(*p3, keys));
+
+    auto p4 = phobic4::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(p4.has_value());
+    REQUIRE(verify_bijectivity(*p4, keys));
+}
+
+TEST_CASE("phobic: serialization round-trip after parallel build", "[phobic][parallel]") {
+    auto keys = make_keys(5000);
+    auto phf = phobic5::builder{}.add_all(keys).with_threads(4).build();
+    REQUIRE(phf.has_value());
+
+    auto bytes = phf->serialize();
+    auto restored = phobic5::deserialize(bytes);
+    REQUIRE(restored.has_value());
+
+    for (const auto& k : keys) {
+        REQUIRE(phf->slot_for(k).value == restored->slot_for(k).value);
+    }
+}

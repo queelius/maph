@@ -29,3 +29,6 @@ maph_add_benchmark(bench_filter)
 
 # approximate_map benchmark: perfect_filter<PHF, FPBits> variants.
 maph_add_benchmark(bench_approximate_map)
+
+# PHOBIC parallel build scaling: threads=1,2,4,8 across phobic3/4/5.
+maph_add_benchmark(bench_phobic_parallel)
