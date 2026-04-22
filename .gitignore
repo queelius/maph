@@ -169,3 +169,7 @@ httplib.h
 .env.local
 config.local.*
 integrations/rest_api/_deps/
+
+# Generated paper HTML
+docs/html_paper/
+

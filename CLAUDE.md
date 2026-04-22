@@ -2,383 +2,172 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository Overview
+## Overview
 
-**maph** (Memory-Mapped Approximate Perfect Hash) is a high-performance, memory-mapped database built on perfect hash functions. It provides O(1) lookups with sub-microsecond access times for arbitrary key-value mappings. The project is currently in **v3**, which is a complete rewrite using C++23 with concepts, std::expected, and a composable architecture.
+**maph** is a header-only C++23 library for perfect hash functions (PHFs), membership filters, and memory-mapped value storage. A PHF maps n keys to distinct integers in [0, m); maph provides algorithms to build them, a composition layer to add approximate membership testing, and (optionally) an mmap-backed storage layer for key-value workloads.
 
-## Architecture Overview
+Requires GCC 13+ or Clang 16+. Uses `std::expected`, C++20 concepts, and (for the storage layer) `mmap()`.
 
-### Core Design Philosophy (v3)
+## Build and Test
 
-The v3 architecture follows these principles:
-- **Composability**: Each component does one thing well
-- **Type Safety**: Strong types replace primitive obsession
-- **Error Handling**: std::expected for elegant error propagation
-- **Concepts**: Clear interfaces defined using C++20/23 concepts
-- **Zero-Copy**: Memory-mapped storage for minimal overhead
-- **Lock-Free**: Atomic operations for concurrent access
-
-### Key Components (include/maph/)
-
-1. **core.hpp**: Fundamental types and concepts
-   - Strong types: `slot_index`, `hash_value`, `slot_count`
-   - Error handling via `std::expected<T, error>`
-   - Core concepts: `hasher`, `storage_backend`
-
-2. **hashers.hpp**: Hash function implementations
-   - FNV-1a hasher with configurable slot count
-   - Linear probe hasher (decorator pattern)
-   - Basic minimal_perfect_hasher (simple implementation)
-   - Hybrid hasher (combines perfect and standard hashing)
-   - Interface defined by `hasher` concept
-
-3. **hashers_perfect.hpp**: Production-ready perfect hash implementations
-   - **RecSplit**: Simplified bucket-split algorithm (~50-100 bits/key in current impl due to fingerprint storage)
-   - **CHD**: Classic Compress-Hash-Displace algorithm
-   - **BBHash**: Multi-level collision resolution with O(1) rank queries
-   - **FCH**: Fox-Chazelle-Heath algorithm
-   - **PTHash**: Works for small key sets only (known limitation)
-   - Policy-based design with `perfect_hash_builder` concept
-
-4. **storage.hpp**: Storage backends
-   - Memory-mapped file storage (zero-copy)
-   - In-memory storage (testing)
-   - Interface defined by `storage_backend` concept
-
-5. **table.hpp**: Hash table implementation
-   - Combines hasher + storage
-   - Linear probing for collision resolution
-   - Statistics tracking (load factor, probes)
-
-6. **optimization.hpp**: Perfect hash optimization
-   - Converts dynamic hash tables to perfect hash
-   - Guarantees O(1) lookups with no collisions
-
-7. **maph.hpp**: High-level convenience interface
-   - Type-erased wrapper for flexibility
-   - Familiar get/set/remove API
-
-### Layered Architecture
-
-```
-┌─────────────────────────────────────┐
-│  Applications (CLI, REST API)       │
-├─────────────────────────────────────┤
-│  High-level Interface (maph.hpp)    │
-├─────────────────────────────────────┤
-│  Hash Table (table.hpp)             │
-├─────────────────────────────────────┤
-│  Hashers (hashers.hpp) + Storage    │
-│  (storage.hpp)                      │
-├─────────────────────────────────────┤
-│  Core Types (core.hpp)              │
-└─────────────────────────────────────┘
-```
-
-## Common Development Commands
-
-### Building the Project
+All commands run from the `build/` directory:
 
 ```bash
-# Configure for v3 (requires C++23)
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_EXAMPLES=ON
-
-# Build all targets
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 make -j$(nproc)
 
-# Build specific targets
-make maph                    # Header-only library
-make v3_demo                 # Demo application
-make v3_simple_test         # Simple test
-make hybrid_architecture_demo
-```
+# Run all tests
+ctest --output-on-failure -R "v3_"
 
-### Running Tests
-
-```bash
-# Run all tests via CTest
-cd build && ctest --verbose --output-on-failure
-
-# Run specific test suites (from build directory)
-./tests/v3/test_v3_core
-./tests/v3/test_v3_hashers
-./tests/v3/test_v3_storage
-./tests/v3/test_v3_table
-./tests/v3/test_v3_integration
-./tests/v3/test_v3_properties
+# Run a single test suite
+./tests/v3/test_v3_phobic
 ./tests/v3/test_v3_perfect_hash
+./tests/v3/test_v3_perfect_filter
+./tests/v3/test_v3_membership
+./tests/v3/test_v3_phf_concept
 
-# Run tests with specific tags using Catch2
-./tests/v3/test_v3_comprehensive "[core]"
-./tests/v3/test_v3_comprehensive "[hasher]"
-./tests/v3/test_v3_comprehensive "[storage]"
-./tests/v3/test_v3_perfect_hash "[recsplit]"
-./tests/v3/test_v3_perfect_hash "[bbhash]"
-./tests/v3/test_v3_perfect_hash "[chd]"
-./tests/v3/test_v3_perfect_hash "[fch]"
+# Run by Catch2 tag
+./tests/v3/test_v3_perfect_hash "[bbhash]"    # [recsplit], [chd], [fch], [pthash]
+./tests/v3/test_v3_membership "[packed]"
+./tests/v3/test_v3_perfect_filter "[perfect_filter]"
 
-# Run single test by name
-./tests/v3/test_v3_perfect_hash "BBHash: Small key set"
+# Coverage and sanitizers
+cmake .. -DBUILD_TESTS=ON -DENABLE_COVERAGE=ON && make -j && make v3_coverage
+cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZERS=ON && make -j
+
+# Benchmarks (fair comparison of all algorithms, pure PHF + perfect_filter)
+cmake .. -DBUILD_BENCHMARKS=ON && make -j bench_phobic
+./benchmarks/bench_phobic 10000 100000 1000000
 ```
 
-### Test Coverage
+CMake options: `BUILD_TESTS`, `BUILD_BENCHMARKS`, `BUILD_EXAMPLES`, `BUILD_REST_API`, `ENABLE_COVERAGE`, `ENABLE_SANITIZERS` (all OFF by default).
 
-```bash
-# Build with coverage enabled
-cmake .. -DBUILD_TESTS=ON -DENABLE_COVERAGE=ON
-make -j
+## Architecture
 
-# Generate coverage report
-make v3_coverage             # Full HTML report in build/coverage/html/
-make v3_coverage_check       # Quick text report
+The library is layered. Lower layers know nothing about upper layers:
+
+```
+Layer 3: maph.hpp, table.hpp, storage.hpp, optimization.hpp  (mmap key-value storage)
+         |
+Layer 2: perfect_filter.hpp                                   (PHF + fingerprints)
+         |
+Layer 1: phobic.hpp, hashers_perfect.hpp, membership.hpp      (PHF algorithms, fingerprint array)
+         |
+Layer 0: phf_concept.hpp, core.hpp                            (concepts, strong types, errors)
 ```
 
-### Running Benchmarks
+### Layer 0: Concepts and core types
 
-```bash
-# Build benchmarks
-cmake .. -DBUILD_BENCHMARKS=ON
-make -j
-
-# Run individual benchmarks (from build directory)
-./benchmarks/bench_latency              # Single-threaded latency
-./benchmarks/bench_throughput           # Multi-threaded throughput
-./benchmarks/bench_ycsb                 # YCSB workloads
-./benchmarks/bench_comparison           # vs std::unordered_map
-./benchmarks/bench_perfect_hash         # Perfect hash optimization
-./benchmarks/bench_perfect_hash_compare # Compare all PH algorithms
-
-# Perfect hash comparison with custom key counts
-./benchmarks/bench_perfect_hash_compare 1000 10000 100000
-```
-
-### Building REST API Server
-
-```bash
-cmake .. -DBUILD_REST_API=ON
-make -j
-./integrations/rest_api/maph_server_v3
-```
-
-### Memory Checking
-
-```bash
-# Run tests under Valgrind
-make test_v3_memcheck
-
-# Build with sanitizers
-cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZERS=ON
-make -j
-./tests/v3/test_v3_comprehensive
-```
-
-## Version History
-
-- **v1**: Original implementation (Jan 2024) - see git tag `v1.0.0`
-- **v2**: Perfect hash focus (Mid 2024) - see git branch `v2.0.1`
-- **v3**: Complete rewrite with C++23, concepts, composable architecture (Sept 2024) - **CURRENT**
-
-**Important**: The codebase is v3-only. v1/v2 are preserved in git history but removed from the working directory.
-
-## Testing Strategy
-
-### Test Organization (tests/v3/)
-
-| File | Purpose |
-|------|---------|
-| `test_core.cpp` | Core types, strong types, error handling |
-| `test_hashers.cpp` | Hash function implementations |
-| `test_storage.cpp` | Storage backends (mmap, memory) |
-| `test_table.cpp` | Hash table operations |
-| `test_integration.cpp` | End-to-end workflows |
-| `test_properties.cpp` | Property-based testing |
-| `test_perfect_hash.cpp` | Perfect hash algorithms |
-
-### Framework
-
-- Uses **Catch2 v3** framework
-- Test discovery via `catch_discover_tests()`
-- Organized with test tags: `[core]`, `[hasher]`, `[storage]`, `[perfect]`, `[recsplit]`, `[bbhash]`, etc.
-
-### Coverage Goals
-
-- Target: >90% code coverage
-- Run coverage regularly: `make v3_coverage`
-- Coverage reports in: `build/coverage/html/`
-
-## Important Notes
-
-### C++ Standard Requirements
-
-- **v3 requires C++23** (uses concepts from C++20 and std::expected from C++23)
-- GCC 13+ or Clang 16+ recommended
-- Template metaprogramming for zero-cost abstractions
-
-### Header-Only Library
-
-- `maph` is a header-only library (INTERFACE target)
-- All implementation in headers under `include/maph/`
-- No separate compilation needed
-- Changes require recompilation of dependents
-
-### Memory-Mapped Storage
-
-- Uses `mmap()` for zero-copy file access
-- Atomic operations for thread-safety
-- 512-byte aligned slots for cache efficiency
-- Persistent across process restarts
-
-### Performance Characteristics
-
-- **GET**: 10M ops/sec, <100ns latency (O(1) with perfect hash)
-- **SET**: 8M ops/sec, <150ns latency (lock-free atomic)
-- **Batch operations**: 50M+ ops/sec with SIMD
-- **BBHash queries**: ~12ns (optimized with O(1) rank structure)
-- **RecSplit queries**: ~22-30ns
-- **CHD queries**: ~29ns
-
-### Perfect Hash Algorithm Status
-
-| Algorithm | Status | Notes |
-|-----------|--------|-------|
-| RecSplit | ✅ Working | Simplified impl, ~50-100 bits/key |
-| CHD | ✅ Working | Classic algorithm, well-tested |
-| BBHash | ✅ Working | Optimized with O(1) rank queries |
-| FCH | ✅ Working | Simple, educational |
-| PTHash | ⚠️ Limited | Works for small sets only (<100 keys) |
-
-## Perfect Hash Functions
-
-### Using Perfect Hash
+**`phf_concept.hpp`** defines the interface every PHF must satisfy:
 
 ```cpp
-#include <maph/hashers_perfect.hpp>
-
-std::vector<std::string> keys = {"key1", "key2", "key3"};
-
-// RecSplit - Good for most cases
-auto recsplit = recsplit8::builder{}
-    .add_all(keys)
-    .with_seed(12345)
-    .build().value();
-
-// BBHash - Fast queries
-auto bbhash = bbhash3::builder{}
-    .add_all(keys)
-    .with_gamma(2.0)
-    .build().value();
-
-// CHD - Classic, reliable
-auto chd = chd_hasher::builder{}
-    .add_all(keys)
-    .with_lambda(5.0)
-    .build().value();
-
-// FCH - Simple and educational
-auto fch = fch_hasher::builder{}
-    .add_all(keys)
-    .with_bucket_size(4.0)
-    .build().value();
-
-// Use any hasher
-auto slot = recsplit.slot_for("key1");  // O(1) lookup
-auto stats = recsplit.statistics();
-std::cout << "Bits per key: " << stats.bits_per_key << std::endl;
+template<typename P>
+concept perfect_hash_function = requires(const P p, std::string_view key) {
+    { p.slot_for(key) }    -> std::convertible_to<slot_index>;  // NOT optional
+    { p.num_keys() }       -> std::convertible_to<size_t>;
+    { p.range_size() }     -> std::convertible_to<size_t>;      // m >= n
+    { p.bits_per_key() }   -> std::convertible_to<double>;
+    { p.memory_bytes() }   -> std::convertible_to<size_t>;
+    { p.serialize() }      -> std::convertible_to<std::vector<std::byte>>;
+};
 ```
 
-### Testing Perfect Hash
+Critical semantics: `slot_for()` returns a `slot_index` directly, not `std::optional`. For keys in the build set the result is unique and in `[0, range_size())`. For unknown keys the result is arbitrary but still in range. **No fingerprint verification happens at the PHF layer.**
 
-```bash
-# Run all perfect hash tests
-./tests/v3/test_v3_perfect_hash
+**`core.hpp`** has strong types (`slot_index`, `hash_value`, `slot_count`) wrapping `uint64_t`, the `error` enum, `result<T>` = `std::expected<T, error>`, and the `storage_backend` concept.
 
-# Run specific algorithm tests
-./tests/v3/test_v3_perfect_hash "[bbhash]"
-./tests/v3/test_v3_perfect_hash "[recsplit]"
-./tests/v3/test_v3_perfect_hash "[chd]"
-./tests/v3/test_v3_perfect_hash "[fch]"
+### Layer 1: PHF algorithms
 
-# Benchmark comparison
-./benchmarks/bench_perfect_hash_compare
+Five algorithms satisfy `perfect_hash_function`:
+
+| Header | Algorithm | Pure bits/key | Notes |
+|--------|-----------|---------------|-------|
+| `phobic.hpp` | PHOBIC | **~2.7** | Pilot-based. Slow build (pilot search is quadratic-ish per bucket), fastest queries. |
+| `hashers_perfect.hpp` | RecSplit, CHD, BBHash, FCH, PTHash | 27-200 | Legacy algorithms, rewritten under the new concept. |
+
+Each has a `builder` class with `.add(key)`, `.add_all(keys)`, `.with_seed(n)`, `.build() -> result<PHF>`. Builds **retry on failure** (new seed, sometimes bumped parameters like alpha or gamma) rather than using overflow.
+
+**Important:** These algorithms no longer bake in fingerprints or overflow handling. That is entirely the job of `perfect_filter`. Before today's migration they stored 64-bit fingerprints per key; that's gone.
+
+**`membership.hpp`** contains only `packed_fingerprint_array<FPBits>` (1-32 bit fingerprints in a packed bit array) and `membership_fingerprint()` (SplitMix64 hash for fingerprinting). The `xor_filter`, `ribbon_filter`, and `fingerprint_verifier` classes were moved out for a future separate project.
+
+### Layer 2: Perfect filter composition
+
+**`perfect_filter.hpp`** composes any PHF with a packed fingerprint array:
+
+```cpp
+template<perfect_hash_function PHF, unsigned FPBits = 16>
+class perfect_filter {
+    PHF phf_;
+    packed_fingerprint_array<FPBits> fps_;
+public:
+    static perfect_filter build(PHF phf, const std::vector<std::string>& keys);
+    bool contains(std::string_view key) const noexcept;
+    std::optional<slot_index> slot_for(std::string_view key) const noexcept;
+};
 ```
 
-### Implementing a New Perfect Hash Algorithm
+Query: compute slot via PHF, verify fingerprint, return slot or nullopt. FP rate is 2^-FPBits for non-member keys.
 
-1. Implement the hasher class with builder pattern in `include/maph/hashers_perfect.hpp`
-2. Satisfy `perfect_hasher` and `perfect_hash_builder` concepts
-3. Add tests in `tests/v3/test_perfect_hash.cpp`
-4. Add to benchmark in `benchmarks/bench_perfect_hash_compare.cpp`
-5. See `docs/PERFECT_HASH_DESIGN.md` for full specification
+**Why this design wins:** A perfect filter uses `c + log2(1/epsilon)` bits/key (where `c` is the PHF's bits/key). A Bloom filter needs `1.44 * log2(1/epsilon)`. Perfect filter beats Bloom when `epsilon < 2^-(c/0.44)`. At c=2.7, that's epsilon < 1.4%. As FPR shrinks, the advantage grows because Bloom's 1.44x multiplier is structural; perfect filter pays 1.0x per bit of FPR precision.
 
-## Common Tasks
+### Layer 3: Memory-mapped storage (optional)
 
-### Adding a New Test
+`maph.hpp`, `table.hpp`, `storage.hpp`, `optimization.hpp` form the mmap key-value layer. These are currently standalone-compatible via adapter methods (`hash()` and `max_slots()` on `minimal_perfect_hasher` delegate to `slot_for()`/`range_size()`). The table layer still uses a lightweight unconstrained `typename` template parameter rather than a concept; the old `hasher` concept was removed in today's migration.
 
-1. Create test file in `tests/v3/test_myfeature.cpp`
-2. Update `tests/v3/CMakeLists.txt`:
-   ```cmake
-   add_executable(test_v3_myfeature test_myfeature.cpp)
-   target_link_libraries(test_v3_myfeature PRIVATE maph Catch2::Catch2WithMain pthread)
-   catch_discover_tests(test_v3_myfeature TEST_PREFIX "v3_myfeature:")
-   ```
-3. Run tests: `ctest -R v3_myfeature`
+## Testing
 
-### Implementing a New Hasher
+Framework: **Catch2 v3** with `catch_discover_tests()`.
 
-1. Implement `hasher` concept in `include/maph/hashers.hpp`
-2. Required interface:
-   ```cpp
-   struct my_hasher {
-       hash_value hash(std::string_view key) const;
-       slot_count max_slots() const;
-   };
-   ```
-3. Add tests in `tests/v3/test_hashers.cpp`
+| Test file | What it tests |
+|-----------|---------------|
+| `test_phf_concept.cpp` | Concept satisfaction (compile-time + mock runtime) |
+| `test_phobic.cpp` | PHOBIC algorithm (bijectivity, space, serialization, perfect_filter composition) |
+| `test_perfect_hash.cpp` | The 5 legacy algorithms under the new concept |
+| `test_perfect_filter.cpp` | PHF + fingerprint composition |
+| `test_membership.cpp` | `packed_fingerprint_array` at widths 8, 10, 12, 16, 32 |
+| `test_core.cpp`, `test_hashers.cpp`, `test_storage.cpp`, `test_table.cpp`, `test_integration.cpp`, `test_properties.cpp` | Lower-level and integration tests |
 
-### Implementing a New Storage Backend
+Current state: ~184 tests passing. There are **9 pre-existing failures** (mmap_storage error conditions, cached_storage edge cases, integration real-world scenarios, performance scaling) that were failing before today's work and are unrelated to PHF changes.
 
-1. Implement `storage_backend` concept in `include/maph/storage.hpp`
-2. Required interface: `read_slot()`, `write_slot()`, `sync()`, `close()`
-3. Add tests in `tests/v3/test_storage.cpp`
+## Current State (as of 2026-03)
 
-### Debugging Build Issues
+Today's session completed a major migration:
 
-```bash
-# Verbose CMake output
-cmake .. -DCMAKE_VERBOSE_MAKEFILE=ON
+1. **PHOBIC added** as a clean modern PHF (~2.7 bits/key, pilot-based)
+2. **`perfect_hash_function` concept** introduced, replacing old `hasher`/`perfect_hasher` concepts
+3. **All 5 legacy algorithms rewritten** to satisfy the new concept (stripped fingerprints and overflow)
+4. **`perfect_filter` composition layer** added for optional membership verification
+5. **`packed_fingerprint_array` relaxed** to support any width in [1, 32] bits
+6. **Fair benchmarks** now compare all algorithms with matched fingerprint widths
 
-# Check C++20/23 support
-g++ --version
-clang++ --version
+See `docs/superpowers/specs/` and `docs/superpowers/plans/` for the design and migration history. See `docs/OPTIMIZATION_NOTES.md` for what's left to optimize.
 
-# Debug build with symbols
-cmake .. -DCMAKE_BUILD_TYPE=Debug
+Known weaknesses:
+- **PHOBIC build time** is slow at scale (~23s for 100K keys). Pilot search is parallelizable but not yet parallelized in maph's version.
+- **BBHash space** can be high (up to 27 bits/key at scale) because 3 levels + gamma retry isn't enough for minimal mode. Increasing NumLevels would help.
+- **RecSplit space** is 96 bits/key (the simplified impl). The theoretical 1.8 bits/key requires a tighter encoding scheme.
 
-# Check what files are being compiled
-make VERBOSE=1
-```
+## Adding a New PHF Algorithm
+
+1. Create a new header (e.g., `include/maph/myalgo.hpp`).
+2. Implement a class satisfying `perfect_hash_function` (see `phf_concept.hpp`).
+3. Provide a `builder` class with `.add()`, `.add_all()`, `.with_seed()`, `.build() -> result<MyAlgo>`.
+4. On build failure, retry with a different seed (loop up to 50-100 attempts). No overflow.
+5. Write serialization using `PERFECT_HASH_MAGIC` (0x4D415048) and a unique `ALGORITHM_ID`.
+6. Add `static_assert(perfect_hash_function<MyAlgo>);` in the header.
+7. Tests follow the pattern in `tests/v3/test_phobic.cpp`: bijectivity, space, determinism, serialization round-trip, `perfect_filter` composition.
+8. Add to `benchmarks/bench_phobic.cpp` for fair comparison.
+
+## Related Projects
+
+- **`../phobic/`**: standalone Python package for PHOBIC (C11, no C++, parallel build via pthreads). Built in this session.
+- Membership filters (xor_filter, ribbon_filter, bloom) are slated for a separate project (not maph).
 
 ## Coding Standards
 
-- **Naming**: Classes `PascalCase`, functions `snake_case`, constants `UPPER_SNAKE_CASE`, members `member_name_`
-- **Formatting**: 4-space indent, 100 char max line length
+- **Naming**: classes `snake_case` for algorithm types (follows existing library convention), functions `snake_case`, constants `UPPER_SNAKE_CASE`, members `member_name_`
+- **Formatting**: 4-space indent, 100-char line limit
 - **Style**: RAII, `std::unique_ptr` over raw pointers, `const` everywhere possible
-
-## Commit Message Convention
-
-Follow conventional commits (as per CONTRIBUTING.md):
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `docs:` - Documentation changes
-- `test:` - Test additions/changes
-- `refactor:` - Code refactoring
-- `perf:` - Performance improvements
-- `chore:` - Maintenance tasks
-
-## Related Files
-
-- `README.md`: User-facing documentation
-- `CONTRIBUTING.md`: Contributor guidelines, coding standards
-- `CHANGELOG.md`: Version history
-- `docs/PERFECT_HASH_DESIGN.md`: Perfect hash architecture specification
+- **Commits**: conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`, `chore:`)
