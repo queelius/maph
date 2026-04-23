@@ -52,15 +52,34 @@ Reports `slot_for` behaviour with no membership verification.
 | bbhash3        |  10,394.86 |   36.00  |             158.7 |          258.6 |  6.2 | minimal |
 | bbhash5        |     418.77 |   20.00  |             170.3 |          235.9 |  5.7 | minimal |
 | fch            |     850.06 |  200.00  |             271.3 |          290.5 |  3.7 | minimal |
-| **shock_hash128** |  46,929.89 | **1.50** | 323.5 | 420.0 | 3.1 | **non-minimal (1.67x)** |
-| shock_hash64   |     FAILED |    -     |              -    |           -    |  -   | bucket overflow at 1M |
+| **shock_hash128** |  14,292.4 | **1.54** | 370 | - | - | **non-minimal (1.85x)** |
+| shock_hash64   |   7,292.2  |    2.11  |             374   |           -    |  -   | non-minimal (2.06x) |
 
-`shock_hash128` is the new space champion on pure PHF: **1.50 bits/key**,
-matching the Lehmann-Sanders-Walzer 2023 paper's headline number within
-our simplified implementation. The cost is non-minimality (range_size
-is about 1.67x num_keys) and a moderate build time. `shock_hash64` is
-more compact per bucket but overflows at 1M keys without clever bucket
-overflow recovery; use 128 for N above ~100K.
+Both shock_hash variants now succeed at 1M after the progressive
+load-factor back-off was added (commit 6c8beeb). `shock_hash128` is
+the new space champion on pure PHF: **1.54 bits/key**, within 3% of
+the Lehmann-Sanders-Walzer 2023 paper's 1.5 b/k claim. Cost is
+non-minimality (range_size ~1.85x num_keys at 1M) and a moderate
+build time. Prefer shock_hash128 for large N.
+
+### At 10,000,000 keys (selected algorithms)
+
+| algorithm              | build (ms) | bits/key | range% | notes |
+|------------------------|-----------:|---------:|-------:|-------|
+| bbhash5                |     6,150  |    20.00 |   100% | minimal, fastest-at-scale |
+| partitioned<phobic4>   |     7,448  |    2.76  |   100% | minimal, best-space+speed |
+| shock_hash64           |    48,713  |    2.24  |   229% | non-minimal |
+| **shock_hash128**      |    67,069  | **1.56** |   185% | space champion |
+| phobic3 (serial)       |   338,838  |    2.80  |  100.5%| too slow at this scale |
+| phobic5 (serial)       |    skipped |     -    |   -    | would be ~1 hour |
+
+At 10M the practical MPHF option is `partitioned_phf<phobic4>`: 7.4 s
+build at 2.76 b/k, minimal range. Plain phobic5 becomes unusable
+(hundreds of seconds to thousands of seconds). shock_hash128 wins
+on pure space but its 1.85x range makes the total footprint (PHF +
+any values array) higher than the partitioned PHOBIC option in
+composition. For pure PHF use with space as the sole criterion,
+shock_hash128 is the winner.
 
 ### Observations
 
@@ -381,6 +400,30 @@ Two implementations are compared:
 | pva<bbhash5, 16>         |  16  |      550.1 |    36.00 |      136.1 |
 | pva<bbhash5, 64>         |  64  |      552.4 |    84.00 |      113.7 |
 
+### At 10,000,000 keys
+
+| method                   |   M  | build (ms) | bits/key | query (ns) |
+|--------------------------|:----:|-----------:|---------:|-----------:|
+| ribbon<1>                |   1  |   26,171.0 |     1.10 |      280.5 |
+| ribbon<8>                |   8  |   28,996.6 |     8.80 |      282.3 |
+| ribbon<16>               |  16  |   31,752.0 |    17.60 |      317.6 |
+| ribbon<32>               |  32  |   30,993.3 |    35.20 |      335.2 |
+| ribbon<64>               |  64  |   32,074.0 |    70.40 |      395.1 |
+| pva<part<phobic4>, 1>    |   1  |   10,038.2 |     3.76 |      252.1 |
+| pva<part<phobic4>, 8>    |   8  |   11,575.5 |    10.76 |      260.4 |
+| pva<part<phobic4>, 16>   |  16  |   11,353.0 |    18.76 |      264.7 |
+| pva<part<phobic4>, 32>   |  32  |   11,273.8 |    34.76 |      287.4 |
+| pva<part<phobic4>, 64>   |  64  |   10,527.1 |    66.76 |      278.7 |
+| pva<bbhash5, 1>          |   1  |   11,119.1 |    21.00 |      162.9 |
+| pva<bbhash5, 16>         |  16  |   11,195.6 |    36.00 |      214.5 |
+
+Scale behavior: ribbon grows slightly on space (0.02 bits per 10x,
+from the auto-epsilon adjustment). pva-based structures hold their
+space exactly (determined by PHF and M alone). Query latency grows
+moderately for all: cache behavior dominates at 10M working set.
+ribbon builds take 26-32 s at 10M, partitioned PHOBIC-backed pva
+takes 10-12 s. Both feasible for any sane workload.
+
 ### The crossover
 
 For a PHF with space `c` bits/key, the two methods cost:
@@ -598,6 +641,23 @@ map) path.
 | 16 |    1,099.8 |    26.46 |     208.4  |
 | 32 |    1,078.0 |    43.74 |     213.6  |
 | 64 |    1,172.5 |    78.30 |     262.9  |
+
+### Ribbon-based bloomier at 10,000,000 keys
+
+Ribbon-only subset (pva+phobic5 rows were skipped: each would take
+20+ minutes at this scale).
+
+| composition                      | build (ms) | bits/key |
+|----------------------------------|-----------:|---------:|
+| bloomier<rib1, binary_fuse<8>>   |   28,866.4 |    10.17 |
+| bloomier<rib8, binary_fuse<8>>   |   31,342.1 |    17.87 |
+| bloomier<rib16, xor<8>>          |   33,513.7 |    27.44 |
+| bloomier<rib16, binary_fuse<8>>  |   32,652.7 |    26.67 |
+
+10M keys at M=1 value + 8-bit FPR fits in 10.17 * 10^7 / 8 = 12.7 MB.
+Total build time under 35 s using no PHOBIC. For contexts that need
+a compact lookup with a cheap negative answer, this is a strong
+operating point.
 
 ### Observations
 
