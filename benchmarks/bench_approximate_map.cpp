@@ -2,25 +2,38 @@
  * @file bench_approximate_map.cpp
  * @brief Benchmark suite for approximate_map implementations.
  *
- * An approximate_map composes a PHF with a membership oracle. For keys
- * in the build set, slot_for(key) returns the unique slot. For unknowns,
- * slot_for() returns nullopt with bounded FPR. perfect_filter<PHF, FPBits>
- * is the canonical instance.
+ * An approximate_map composes structural identification with approximate
+ * membership. Two patterns in the library satisfy this:
  *
- * Compares PHF backends (phobic, recsplit, bbhash) x fingerprint widths
- * (8, 16, 32) on the four axes that matter for an approximate map:
- *   - total bits/key (PHF structure + fingerprint array)
- *   - build time
- *   - contains() query latency
- *   - empirical FPR
+ *   perfect_filter<PHF, FPBits>
+ *     - Query: contains(k) = yes/no; slot_for(k) = optional slot index in [0, n)
+ *     - Space: PHF.bits_per_key + FPBits
+ *     - Use: when you already need a unique slot to index into a separate
+ *       values array you maintain yourself
+ *
+ *   bloomier<Retrieval, Oracle>
+ *     - Query: contains(k) = yes/no; lookup(k) = optional M-bit value
+ *     - Space: Retrieval.bits_per_key + Oracle.bits_per_key
+ *     - Use: when the value can be folded into the structure itself
+ *
+ * This benchmark runs both patterns side by side so you can compare them
+ * on the same axes: build time, total bits/key, contains() latency, and
+ * empirical FPR. Different information content on hit (slot vs value)
+ * but same answer-shape on miss (nullopt).
  */
 
 #include "bench_harness.hpp"
 
+#include <maph/algorithms/bbhash.hpp>
 #include <maph/algorithms/phobic.hpp>
 #include <maph/algorithms/recsplit.hpp>
-#include <maph/algorithms/bbhash.hpp>
+#include <maph/composition/bloomier.hpp>
 #include <maph/composition/perfect_filter.hpp>
+#include <maph/filters/binary_fuse_filter.hpp>
+#include <maph/filters/ribbon_filter.hpp>
+#include <maph/filters/xor_filter.hpp>
+#include <maph/retrieval/phf_value_array.hpp>
+#include <maph/retrieval/ribbon_retrieval.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -94,6 +107,18 @@ query_stats measure_map(const Map& m,
     return {median, p99, mqps};
 }
 
+// Deterministic value-from-key for bloomier build. Same shape as
+// bench_bloomier's so numbers line up.
+inline uint64_t det_value(std::string_view key) noexcept {
+    uint64_t h = 0x9e3779b97f4a7c15ULL;
+    for (char c : key) {
+        h ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+        h *= 0xbf58476d1ce4e5b9ULL;
+        h ^= h >> 31;
+    }
+    return h;
+}
+
 template<typename PHF, unsigned FPBits>
 result_row run_perfect_filter(const std::string& phf_name,
                               const std::vector<std::string>& keys,
@@ -144,6 +169,55 @@ result_row run_perfect_filter(const std::string& phf_name,
     return r;
 }
 
+// Run a bloomier<Retrieval, Oracle> composition and record the same
+// axes as run_perfect_filter so the two can be compared row by row.
+template<typename Retrieval, typename Oracle, unsigned ValueBits, unsigned FPBits>
+result_row run_bloomier_composition(const std::string& name,
+                                    const std::vector<std::string>& keys,
+                                    const std::vector<std::string>& unknowns,
+                                    size_t total_queries) {
+    using clock = std::chrono::high_resolution_clock;
+    using std::chrono::duration_cast;
+    using std::chrono::microseconds;
+    using Map = bloomier<Retrieval, Oracle>;
+
+    result_row r{};
+    r.algorithm = name;
+    r.key_count = keys.size();
+    r.ok = false;
+
+    reset_peak_rss();
+    auto t0 = clock::now();
+    auto built = typename Map::builder{}
+        .add_all_with(std::span<const std::string>{keys},
+                      [](std::string_view k) { return det_value(k); })
+        .build();
+    auto t1 = clock::now();
+    r.build_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0;
+    r.build_peak_rss_kb = get_peak_rss_kb();
+    if (!built.has_value()) return r;
+
+    r.ok = true;
+    // bloomier wraps a retrieval (no slots); report num_keys as range for
+    // comparability.
+    r.range_size = built->num_keys();
+    r.bits_per_key = built->bits_per_key();
+    r.memory_bytes = built->memory_bytes();
+    r.serialized_bytes = built->serialize().size();
+
+    auto qs = measure_map(*built, keys, total_queries);
+    r.query_median_ns = qs.median_ns;
+    r.query_p99_ns = qs.p99_ns;
+    r.query_mqps = qs.throughput_mqps;
+
+    size_t fp = 0;
+    for (const auto& k : unknowns) {
+        if (built->contains(k)) ++fp;
+    }
+    r.fp_rate = static_cast<double>(fp) / static_cast<double>(unknowns.size());
+    return r;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -181,6 +255,7 @@ int main(int argc, char** argv) {
             std::cout.flush();
         };
 
+        // === perfect_filter (slot-returning approximate maps) ===
         do_one("phobic5+pf8",   [&]{ return run_perfect_filter<phobic5,    8>("phobic5",   keys, unknowns, total_queries); });
         do_one("phobic5+pf16",  [&]{ return run_perfect_filter<phobic5,   16>("phobic5",   keys, unknowns, total_queries); });
         do_one("phobic5+pf32",  [&]{ return run_perfect_filter<phobic5,   32>("phobic5",   keys, unknowns, total_queries); });
@@ -191,6 +266,29 @@ int main(int argc, char** argv) {
 
         do_one("bbhash3+pf16",  [&]{ return run_perfect_filter<bbhash3,   16>("bbhash3",   keys, unknowns, total_queries); });
         do_one("bbhash5+pf16",  [&]{ return run_perfect_filter<bbhash5,   16>("bbhash5",   keys, unknowns, total_queries); });
+
+        // === bloomier (value-returning approximate maps) ===
+        // Same FPR (2^-8 or 2^-16) and value width (M=16) so the rows
+        // line up with perfect_filter on build time, space, and latency.
+        do_one("bloomier<rib16,xor8>",
+            [&]{ return run_bloomier_composition<ribbon_retrieval<16>, xor_filter<8>, 16, 8>(
+                    "bloomier<rib16,xor8>", keys, unknowns, total_queries); });
+        do_one("bloomier<rib16,binfuse8>",
+            [&]{ return run_bloomier_composition<ribbon_retrieval<16>, binary_fuse_filter<8>, 16, 8>(
+                    "bloomier<rib16,binfuse8>", keys, unknowns, total_queries); });
+        do_one("bloomier<rib16,rib8>",
+            [&]{ return run_bloomier_composition<ribbon_retrieval<16>, ribbon_filter<8>, 16, 8>(
+                    "bloomier<rib16,rib8>", keys, unknowns, total_queries); });
+        do_one("bloomier<rib16,binfuse16>",
+            [&]{ return run_bloomier_composition<ribbon_retrieval<16>, binary_fuse_filter<16>, 16, 16>(
+                    "bloomier<rib16,binfuse16>", keys, unknowns, total_queries); });
+        do_one("bloomier<pva<phobic5>16,xor8>",
+            [&]{ return run_bloomier_composition<phf_value_array<phobic5, 16>, xor_filter<8>, 16, 8>(
+                    "bloomier<pva<phobic5>16,xor8>", keys, unknowns, total_queries); });
+        // Narrow-M cipher-map-flavored row: 1-bit value + 8-bit FPR.
+        do_one("bloomier<rib1,binfuse8>",
+            [&]{ return run_bloomier_composition<ribbon_retrieval<1>, binary_fuse_filter<8>, 1, 8>(
+                    "bloomier<rib1,binfuse8>", keys, unknowns, total_queries); });
     }
     return 0;
 }
