@@ -154,7 +154,8 @@ public:
         std::vector<std::string> keys_{};
         uint64_t global_seed_{0x5a5a'5a5a'5a5a'5a5aULL};
         size_t max_seed_trials_{1 << 20};
-        size_t max_global_retries_{8};
+        size_t max_global_retries_{16};
+        double target_load_factor_{0.0};  // 0 => auto (scales with N)
 
     public:
         builder() = default;
@@ -169,6 +170,12 @@ public:
 
         builder& with_seed(uint64_t s) { global_seed_ = s; return *this; }
         builder& with_max_seed_trials(size_t t) { max_seed_trials_ = t; return *this; }
+        // Fraction of bucket_size to target as expected load. Smaller is
+        // safer (fewer Poisson overflows per attempt) but wastes more
+        // range. 0.5 is a good default above 1M keys.
+        builder& with_target_load_factor(double f) {
+            target_load_factor_ = f; return *this;
+        }
 
         [[nodiscard]] result<shock_hash> build() {
             std::sort(keys_.begin(), keys_.end());
@@ -176,19 +183,20 @@ public:
 
             if (keys_.empty()) return std::unexpected(error::optimization_failed);
 
+            // Pick a target load factor. Start optimistic (0.6) and let
+            // the progressive back-off below handle overflow on retry.
+            // Tight packing means smaller range but more overflows at
+            // scale; back-off automatically loosens when needed.
+            double load_factor =
+                target_load_factor_ > 0.0 ? target_load_factor_ : 0.6;
+
             std::mt19937_64 rng{global_seed_};
             for (size_t retry = 0; retry < max_global_retries_; ++retry) {
                 shock_hash out;
                 out.global_seed_ = rng();
                 out.num_keys_ = keys_.size();
-                // Target bucket load is 0.6 * bucket_size. Under random
-                // bucket assignment, Poisson variance pushes occasional
-                // buckets above target; the 0.4 slack absorbs those
-                // even at 10^5 buckets (which is num_keys ~ 5M). Load
-                // factor within a bucket then averages to 0.6, safely
-                // below the cuckoo peelability threshold.
                 double target_load =
-                    static_cast<double>(bucket_size) * 0.6;
+                    static_cast<double>(bucket_size) * load_factor;
                 out.num_buckets_ = static_cast<size_t>(
                     std::ceil(static_cast<double>(keys_.size()) / target_load));
                 if (out.num_buckets_ == 0) out.num_buckets_ = 1;
@@ -196,6 +204,13 @@ public:
                 if (attempt_build(out)) {
                     return out;
                 }
+
+                // Progressive back-off: tighten target load on retry.
+                // Each failed attempt reduces load_factor by 10% of its
+                // current value, giving quadratic-ish convergence to a
+                // safe packing.
+                load_factor *= 0.9;
+                if (load_factor < 0.25) load_factor = 0.25;
             }
             return std::unexpected(error::optimization_failed);
         }
