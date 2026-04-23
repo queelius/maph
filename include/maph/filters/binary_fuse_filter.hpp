@@ -23,6 +23,7 @@
 
 #include "../core.hpp"
 #include "../detail/fingerprint_hash.hpp"
+#include "../detail/serialization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -228,47 +229,32 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& v) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(v)>>(v);
-            out.insert(out.end(), b.begin(), b.end());
-        };
-        append(static_cast<uint32_t>(FingerprintBits));
-        append(seed_);
-        append(static_cast<uint64_t>(segment_length_));
-        append(static_cast<uint64_t>(segment_count_));
-        append(static_cast<uint64_t>(array_length_));
-        append(static_cast<uint64_t>(table_.size()));
-        for (auto v : table_) append(v);
+        phf_serial::append(out, static_cast<uint32_t>(FingerprintBits));
+        phf_serial::append(out, seed_);
+        phf_serial::append(out, static_cast<uint64_t>(segment_length_));
+        phf_serial::append(out, static_cast<uint64_t>(segment_count_));
+        phf_serial::append(out, static_cast<uint64_t>(array_length_));
+        phf_serial::append_vector(out, table_);
         return out;
     }
 
     [[nodiscard]] static std::optional<binary_fuse_filter>
     deserialize(std::span<const std::byte> bytes) {
-        size_t off = 0;
-        auto read = [&](auto& v) -> bool {
-            if (off + sizeof(v) > bytes.size()) return false;
-            std::memcpy(&v, bytes.data() + off, sizeof(v));
-            off += sizeof(v);
-            return true;
-        };
+        phf_serial::reader r{bytes};
         uint32_t fp_bits{};
-        uint64_t seed{}, sl{}, sc{}, al{}, tsize{};
-        if (!read(fp_bits) || fp_bits != FingerprintBits) return std::nullopt;
-        if (!read(seed) || !read(sl) || !read(sc) || !read(al) || !read(tsize)) {
+        uint64_t seed{}, sl{}, sc{}, al{};
+        if (!r.read(fp_bits) || fp_bits != FingerprintBits) return std::nullopt;
+        if (!r.read(seed) || !r.read(sl) || !r.read(sc) || !r.read(al)) {
             return std::nullopt;
         }
-        if (tsize > (bytes.size() - off) / sizeof(fp_type)) return std::nullopt;
 
-        binary_fuse_filter r;
-        r.seed_ = seed;
-        r.segment_length_ = static_cast<size_t>(sl);
-        r.segment_count_ = static_cast<size_t>(sc);
-        r.array_length_ = static_cast<size_t>(al);
-        r.table_.resize(static_cast<size_t>(tsize));
-        for (auto& v : r.table_) {
-            if (!read(v)) return std::nullopt;
-        }
-        return r;
+        binary_fuse_filter out;
+        out.seed_ = seed;
+        out.segment_length_ = static_cast<size_t>(sl);
+        out.segment_count_ = static_cast<size_t>(sc);
+        out.array_length_ = static_cast<size_t>(al);
+        if (!r.read_vector(out.table_)) return std::nullopt;
+        return out;
     }
 };
 

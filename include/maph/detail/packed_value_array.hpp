@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "serialization.hpp"
+
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -88,38 +90,23 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& val) {
-            auto bytes = std::bit_cast<std::array<std::byte, sizeof(val)>>(val);
-            out.insert(out.end(), bytes.begin(), bytes.end());
-        };
-        append(static_cast<uint32_t>(M));
-        append(static_cast<uint64_t>(num_slots_));
-        append(static_cast<uint64_t>(data_.size()));
-        for (auto w : data_) append(w);
+        phf_serial::append(out, static_cast<uint32_t>(M));
+        phf_serial::append(out, static_cast<uint64_t>(num_slots_));
+        phf_serial::append_vector(out, data_);
         return out;
     }
 
-    // Deserialize starting at offset (updated in place).
     [[nodiscard]] static std::optional<packed_value_array>
-    deserialize(std::span<const std::byte> bytes, size_t& offset) {
-        auto read = [&](auto& val) -> bool {
-            if (offset + sizeof(val) > bytes.size()) return false;
-            std::memcpy(&val, bytes.data() + offset, sizeof(val));
-            offset += sizeof(val);
-            return true;
-        };
-        uint32_t width{}; uint64_t slots{}; uint64_t words{};
-        if (!read(width) || width != M) return std::nullopt;
-        if (!read(slots) || !read(words)) return std::nullopt;
-        if (words > (bytes.size() - offset) / sizeof(uint64_t)) return std::nullopt;
+    deserialize(std::span<const std::byte> bytes) {
+        phf_serial::reader r{bytes};
+        uint32_t width{}; uint64_t slots{};
+        if (!r.read(width) || width != M) return std::nullopt;
+        if (!r.read(slots)) return std::nullopt;
 
-        packed_value_array r;
-        r.num_slots_ = static_cast<size_t>(slots);
-        r.data_.resize(static_cast<size_t>(words));
-        for (auto& w : r.data_) {
-            if (!read(w)) return std::nullopt;
-        }
-        return r;
+        packed_value_array out;
+        out.num_slots_ = static_cast<size_t>(slots);
+        if (!r.read_vector(out.data_)) return std::nullopt;
+        return out;
     }
 };
 

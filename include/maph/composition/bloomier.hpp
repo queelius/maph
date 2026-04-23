@@ -35,6 +35,7 @@
 
 #include "../concepts/retrieval.hpp"
 #include "../core.hpp"
+#include "../detail/serialization.hpp"
 
 #include <array>
 #include <bit>
@@ -104,13 +105,9 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append_u64 = [&](uint64_t x) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(x)>>(x);
-            out.insert(out.end(), b.begin(), b.end());
-        };
         auto r_bytes = r_.serialize();
         auto o_bytes = o_.serialize();
-        append_u64(static_cast<uint64_t>(r_bytes.size()));
+        phf_serial::append(out, static_cast<uint64_t>(r_bytes.size()));
         out.insert(out.end(), r_bytes.begin(), r_bytes.end());
         out.insert(out.end(), o_bytes.begin(), o_bytes.end());
         return out;

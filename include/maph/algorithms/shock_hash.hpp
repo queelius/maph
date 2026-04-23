@@ -100,34 +100,26 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& v) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(v)>>(v);
-            out.insert(out.end(), b.begin(), b.end());
-        };
-        append(static_cast<uint32_t>(bucket_size));
-        append(global_seed_);
-        append(static_cast<uint64_t>(num_keys_));
-        append(static_cast<uint64_t>(num_buckets_));
-        for (auto s : bucket_seeds_) append(s);
+        phf_serial::append(out, static_cast<uint32_t>(bucket_size));
+        phf_serial::append(out, global_seed_);
+        phf_serial::append(out, static_cast<uint64_t>(num_keys_));
+        phf_serial::append(out, static_cast<uint64_t>(num_buckets_));
+        for (auto s : bucket_seeds_) phf_serial::append(out, s);
         auto ribbon_bytes = choices_.serialize();
-        append(static_cast<uint64_t>(ribbon_bytes.size()));
+        phf_serial::append(out, static_cast<uint64_t>(ribbon_bytes.size()));
         out.insert(out.end(), ribbon_bytes.begin(), ribbon_bytes.end());
         return out;
     }
 
     [[nodiscard]] static result<shock_hash>
     deserialize(std::span<const std::byte> bytes) {
-        size_t off = 0;
-        auto read = [&](auto& v) -> bool {
-            if (off + sizeof(v) > bytes.size()) return false;
-            std::memcpy(&v, bytes.data() + off, sizeof(v));
-            off += sizeof(v);
-            return true;
-        };
+        phf_serial::reader reader{bytes};
         uint32_t bsz{};
         uint64_t gseed{}, nkeys{}, nbuckets{};
-        if (!read(bsz) || bsz != bucket_size) return std::unexpected(error::invalid_format);
-        if (!read(gseed) || !read(nkeys) || !read(nbuckets)) {
+        if (!reader.read(bsz) || bsz != bucket_size) {
+            return std::unexpected(error::invalid_format);
+        }
+        if (!reader.read(gseed) || !reader.read(nkeys) || !reader.read(nbuckets)) {
             return std::unexpected(error::invalid_format);
         }
         shock_hash out;
@@ -136,13 +128,15 @@ public:
         out.num_buckets_ = static_cast<size_t>(nbuckets);
         out.bucket_seeds_.resize(out.num_buckets_);
         for (auto& s : out.bucket_seeds_) {
-            if (!read(s)) return std::unexpected(error::invalid_format);
+            if (!reader.read(s)) return std::unexpected(error::invalid_format);
         }
         uint64_t ribbon_len{};
-        if (!read(ribbon_len)) return std::unexpected(error::invalid_format);
-        if (off + ribbon_len > bytes.size()) return std::unexpected(error::invalid_format);
-        auto r = ribbon_retrieval<1>::deserialize(
-            bytes.subspan(off, static_cast<size_t>(ribbon_len)));
+        if (!reader.read(ribbon_len)) return std::unexpected(error::invalid_format);
+        std::span<const std::byte> ribbon_span;
+        if (!reader.read_span(ribbon_span, static_cast<size_t>(ribbon_len))) {
+            return std::unexpected(error::invalid_format);
+        }
+        auto r = ribbon_retrieval<1>::deserialize(ribbon_span);
         if (!r) return std::unexpected(r.error());
         out.choices_ = std::move(*r);
         return out;

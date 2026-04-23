@@ -84,11 +84,7 @@ public:
         auto val_bytes = values_.serialize();
         std::vector<std::byte> out;
         out.reserve(8 + phf_bytes.size() + val_bytes.size());
-        auto append_u64 = [&](uint64_t x) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(x)>>(x);
-            out.insert(out.end(), b.begin(), b.end());
-        };
-        append_u64(static_cast<uint64_t>(phf_bytes.size()));
+        phf_serial::append(out, static_cast<uint64_t>(phf_bytes.size()));
         out.insert(out.end(), phf_bytes.begin(), phf_bytes.end());
         out.insert(out.end(), val_bytes.begin(), val_bytes.end());
         return out;
@@ -191,18 +187,18 @@ public:
 
     [[nodiscard]] static result<phf_value_array>
     deserialize(std::span<const std::byte> bytes) {
-        if (bytes.size() < 8) return std::unexpected(error::invalid_format);
+        phf_serial::reader r{bytes};
+        uint64_t phf_sz{};
+        if (!r.read(phf_sz)) return std::unexpected(error::invalid_format);
+        std::span<const std::byte> phf_span;
+        if (!r.read_span(phf_span, static_cast<size_t>(phf_sz))) {
+            return std::unexpected(error::invalid_format);
+        }
 
-        uint64_t phf_sz = 0;
-        std::memcpy(&phf_sz, bytes.data(), 8);
-        if (8 + phf_sz > bytes.size()) return std::unexpected(error::invalid_format);
-
-        auto phf_span = bytes.subspan(8, static_cast<size_t>(phf_sz));
         auto phf_r = PHF::deserialize(phf_span);
         if (!phf_r) return std::unexpected(phf_r.error());
 
-        size_t offset = 0;
-        auto val_opt = packed_type::deserialize(bytes.subspan(8 + phf_sz), offset);
+        auto val_opt = packed_type::deserialize(bytes.subspan(8 + phf_sz));
         if (!val_opt) return std::unexpected(error::invalid_format);
 
         phf_value_array out{};

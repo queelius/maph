@@ -93,35 +93,26 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& v) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(v)>>(v);
-            out.insert(out.end(), b.begin(), b.end());
-        };
-        append(padding_factor_);
-        append(pad_seed_);
+        phf_serial::append(out, padding_factor_);
+        phf_serial::append(out, pad_seed_);
         auto inner_bytes = inner_.serialize();
-        append(static_cast<uint64_t>(inner_bytes.size()));
+        phf_serial::append(out, static_cast<uint64_t>(inner_bytes.size()));
         out.insert(out.end(), inner_bytes.begin(), inner_bytes.end());
         return out;
     }
 
     [[nodiscard]] static result<padded_phf>
     deserialize(std::span<const std::byte> bytes) {
-        size_t off = 0;
-        auto read = [&](auto& v) -> bool {
-            if (off + sizeof(v) > bytes.size()) return false;
-            std::memcpy(&v, bytes.data() + off, sizeof(v));
-            off += sizeof(v);
-            return true;
-        };
+        phf_serial::reader r{bytes};
         uint64_t factor{}, seed{}, inner_len{};
-        if (!read(factor) || !read(seed) || !read(inner_len)) {
+        if (!r.read(factor) || !r.read(seed) || !r.read(inner_len)) {
             return std::unexpected(error::invalid_format);
         }
-        if (off + inner_len > bytes.size()) {
+        std::span<const std::byte> inner_span;
+        if (!r.read_span(inner_span, static_cast<size_t>(inner_len))) {
             return std::unexpected(error::invalid_format);
         }
-        auto inner_r = Inner::deserialize(bytes.subspan(off, static_cast<size_t>(inner_len)));
+        auto inner_r = Inner::deserialize(inner_span);
         if (!inner_r) return std::unexpected(inner_r.error());
         return padded_phf{std::move(*inner_r), factor, seed};
     }

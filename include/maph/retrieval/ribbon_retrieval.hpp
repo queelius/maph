@@ -30,6 +30,7 @@
 #include "../core.hpp"
 #include "../detail/fingerprint_hash.hpp"
 #include "../detail/packed_value_array.hpp"
+#include "../detail/serialization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -125,46 +126,29 @@ public:
 
     [[nodiscard]] std::vector<std::byte> serialize() const {
         std::vector<std::byte> out;
-        auto append = [&](const auto& v) {
-            auto b = std::bit_cast<std::array<std::byte, sizeof(v)>>(v);
-            out.insert(out.end(), b.begin(), b.end());
-        };
-        append(static_cast<uint32_t>(M));
-        append(seed_);
-        append(static_cast<uint64_t>(num_rows_));
-        append(static_cast<uint64_t>(num_keys_));
-        append(static_cast<uint64_t>(solution_.size()));
-        for (auto v : solution_) append(v);
+        phf_serial::append(out, static_cast<uint32_t>(M));
+        phf_serial::append(out, seed_);
+        phf_serial::append(out, static_cast<uint64_t>(num_rows_));
+        phf_serial::append(out, static_cast<uint64_t>(num_keys_));
+        phf_serial::append_vector(out, solution_);
         return out;
     }
 
     [[nodiscard]] static result<ribbon_retrieval>
     deserialize(std::span<const std::byte> bytes) {
-        size_t off = 0;
-        auto read = [&](auto& v) -> bool {
-            if (off + sizeof(v) > bytes.size()) return false;
-            std::memcpy(&v, bytes.data() + off, sizeof(v));
-            off += sizeof(v);
-            return true;
-        };
+        phf_serial::reader r{bytes};
         uint32_t width{};
-        uint64_t seed{}, nrows{}, nkeys{}, sol_sz{};
-        if (!read(width) || width != M) return std::unexpected(error::invalid_format);
-        if (!read(seed) || !read(nrows) || !read(nkeys) || !read(sol_sz)) {
+        uint64_t seed{}, nrows{}, nkeys{};
+        if (!r.read(width) || width != M) return std::unexpected(error::invalid_format);
+        if (!r.read(seed) || !r.read(nrows) || !r.read(nkeys)) {
             return std::unexpected(error::invalid_format);
         }
-        if (sol_sz > (bytes.size() - off) / sizeof(value_type)) {
-            return std::unexpected(error::invalid_format);
-        }
-        ribbon_retrieval r;
-        r.seed_ = seed;
-        r.num_rows_ = static_cast<size_t>(nrows);
-        r.num_keys_ = static_cast<size_t>(nkeys);
-        r.solution_.resize(static_cast<size_t>(sol_sz));
-        for (auto& v : r.solution_) {
-            if (!read(v)) return std::unexpected(error::invalid_format);
-        }
-        return r;
+        ribbon_retrieval out;
+        out.seed_ = seed;
+        out.num_rows_ = static_cast<size_t>(nrows);
+        out.num_keys_ = static_cast<size_t>(nkeys);
+        if (!r.read_vector(out.solution_)) return std::unexpected(error::invalid_format);
+        return out;
     }
 
     // ===== Builder =====
