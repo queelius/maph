@@ -49,6 +49,7 @@ set(MAPH_TEST_SOURCES
     test_binary_fuse.cpp
     test_padded_phf.cpp
     test_shock_hash.cpp
+    test_bloomier.cpp
 )
 
 set(MAPH_TEST_TARGETS "")
