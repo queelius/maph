@@ -156,7 +156,10 @@ public:
     class builder {
         std::vector<std::pair<std::string, value_type>> pairs_{};
         uint64_t seed_{42};
-        double epsilon_{0.08};
+        // 0 => auto: min-space at small N, more slack at large N so a
+        // fixed band width (W=64) can always solve the linear system.
+        // Users can override via with_epsilon().
+        double epsilon_{0.0};
         size_t max_attempts_{50};
 
     public:
@@ -199,6 +202,17 @@ public:
             if (pairs_.empty()) return std::unexpected(error::optimization_failed);
 
             size_t n = pairs_.size();
+            // Auto-scale epsilon: fixed bandwidth W=64 cannot solve the
+            // sparse banded GF(2) system reliably at large N without
+            // some slack. 0.08 is near-optimal for N <= 1M; we add
+            // ~0.02 per 10x growth beyond that. Floor at 0.08 for
+            // small N to preserve tight packing.
+            double eps = epsilon_;
+            if (eps <= 0.0) {
+                double d = std::log10(static_cast<double>(n) + 1.0) - 6.0;  // log10(n/1M)
+                eps = 0.08 + 0.02 * std::max(0.0, d);
+                if (eps > 0.20) eps = 0.20;
+            }
             std::mt19937_64 rng{seed_};
 
             for (size_t attempt = 0; attempt < max_attempts_; ++attempt) {
@@ -206,7 +220,7 @@ public:
                 out.seed_ = rng();
                 out.num_keys_ = n;
                 size_t extra = std::max(W, static_cast<size_t>(
-                    static_cast<double>(n) * epsilon_));
+                    static_cast<double>(n) * eps));
                 out.num_rows_ = n + extra;
 
                 std::vector<row> rows;
