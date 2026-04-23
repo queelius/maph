@@ -1,13 +1,10 @@
 # Benchmark results
 
-Results from running the four benchmark binaries (`bench_phf`, `bench_phf_sweep`,
-`bench_filter`, `bench_approximate_map`) at 10K, 100K, and 1M keys on a single
-Linux workstation. Numbers are reproducible via the same binaries and seeds,
-though relative timings will differ by CPU.
-
-All four benchmarks were run concurrently on the same machine, so timings have
-some cross-contention noise (see "Methodology caveats" below). Space
-measurements and FPR numbers are unaffected.
+Results from the maph benchmark suite on a single Linux workstation,
+covering PHFs, filters, retrieval structures, and approximate maps.
+Numbers are reproducible via the same binaries and seeds; relative
+timings will differ by CPU. Space measurements and FPR numbers are
+machine-invariant.
 
 ---
 
@@ -45,17 +42,25 @@ Reports `slot_for` behaviour with no membership verification.
 
 ### At 1,000,000 keys
 
-| algorithm    | build (ms) | bits/key | query median (ns) | query p99 (ns) | MQPS |
-|--------------|-----------:|---------:|------------------:|---------------:|-----:|
-| phobic3      |  23,414.75 |    2.79  |             146.1 |          245.5 |  6.7 |
-| phobic5      | 103,297.05 |    2.73  |             146.4 |          242.1 |  6.7 |
-| phobic7      |    skipped |    -     |              -    |            -   |  -   |
-| recsplit8    |   3,203.29 |   96.00  |             264.3 |          326.9 |  3.8 |
-| recsplit16   |    skipped |    -     |              -    |            -   |  -   |
-| chd          |   3,660.16 |  134.40  |             265.7 |          303.3 |  3.8 |
-| bbhash3      |  10,190.97 |   36.00  |             153.3 |          258.6 |  6.3 |
-| bbhash5      |     411.03 |   20.00  |             191.8 |          235.9 |  5.2 |
-| fch          |     811.55 |  200.00  |             268.7 |          290.5 |  3.8 |
+| algorithm      | build (ms) | bits/key | query median (ns) | query p99 (ns) | MQPS | notes |
+|----------------|-----------:|---------:|------------------:|---------------:|-----:|-------|
+| phobic3        |  23,462.84 |    2.79  |             146.0 |          245.5 |  6.8 | minimal |
+| phobic5        | 103,841.29 |    2.73  |             144.1 |          242.1 |  7.0 | minimal |
+| phobic7        |    skipped |    -     |              -    |            -   |  -   | does not build |
+| recsplit8      |   3,066.94 |   96.00  |             259.5 |          326.9 |  3.9 | minimal |
+| chd            |   3,401.62 |  134.40  |             253.6 |          303.3 |  4.0 | minimal |
+| bbhash3        |  10,394.86 |   36.00  |             158.7 |          258.6 |  6.2 | minimal |
+| bbhash5        |     418.77 |   20.00  |             170.3 |          235.9 |  5.7 | minimal |
+| fch            |     850.06 |  200.00  |             271.3 |          290.5 |  3.7 | minimal |
+| **shock_hash128** |  46,929.89 | **1.50** | 323.5 | 420.0 | 3.1 | **non-minimal (1.67x)** |
+| shock_hash64   |     FAILED |    -     |              -    |           -    |  -   | bucket overflow at 1M |
+
+`shock_hash128` is the new space champion on pure PHF: **1.50 bits/key**,
+matching the Lehmann-Sanders-Walzer 2023 paper's headline number within
+our simplified implementation. The cost is non-minimality (range_size
+is about 1.67x num_keys) and a moderate build time. `shock_hash64` is
+more compact per bucket but overflows at 1M keys without clever bucket
+overflow recovery; use 128 for N above ~100K.
 
 ### Observations
 
@@ -121,25 +126,30 @@ let low gamma succeed and push the space toward the theoretical minimum.
 
 ### At 1,000,000 keys
 
-| filter      | bits/key | build (ms) | query median (ns) | empirical FPR | expected FPR |
-|-------------|---------:|-----------:|------------------:|--------------:|-------------:|
-| xor<8>      |     9.84 |      425.5 |             271.5 |        0.41%  |       0.39%  |
-| xor<16>     |    19.68 |      418.4 |             167.4 |        0.02%  |      0.0015% |
-| xor<32>     |    39.36 |      397.7 |             174.6 |        0%     |          ~0  |
-| ribbon<8>   |     8.64 |    1,499.4 |             315.3 |        0.39%  |       0.39%  |
-| ribbon<16>  |    17.28 |    1,454.8 |             321.2 |        0.002% |      0.0015% |
-| ribbon<32>  |    34.56 |    1,487.9 |             328.3 |        0%     |          ~0  |
+| filter             | bits/key | build (ms) | query median (ns) | empirical FPR | expected FPR |
+|--------------------|---------:|-----------:|------------------:|--------------:|-------------:|
+| xor<8>             |     9.84 |      363.2 |             258.0 |        0.41%  |       0.39%  |
+| xor<16>            |    19.68 |      368.1 |             156.0 |        0.02%  |      0.0015% |
+| xor<32>            |    39.36 |      382.5 |             261.7 |        0%     |          ~0  |
+| ribbon<8>          |     8.64 |    1,291.6 |             281.9 |        0.39%  |       0.39%  |
+| ribbon<16>         |    17.28 |    1,303.8 |             291.6 |        0.002% |      0.0015% |
+| ribbon<32>         |    34.56 |    1,307.6 |             302.2 |        0%     |          ~0  |
+| **binary_fuse<8>** | **9.18** |  **272.2** |         **240.1** |     **0.39%** |       0.39%  |
+| binary_fuse<16>    |    18.35 |      281.5 |             242.1 |       0.001%  |      0.0015% |
+| binary_fuse<32>    |    36.70 |      270.5 |             242.7 |        0%     |          ~0  |
 
 ### Observations
 
-- **Ribbon wins on space** across all widths (about 12% more compact than xor).
-  Matches theory: ribbon's overhead is 1.08x, xor's is 1.23x.
-- **Xor wins on query speed by roughly 2x**. Xor does 3 memory accesses + XOR;
-  ribbon does a banded XOR chain with more accesses.
-- **Xor builds 3.5x faster** than ribbon. Ribbon's Gaussian elimination is
-  structurally more expensive than xor's peeling.
-- **Empirical FPR tracks theory** tightly for 8-bit. Slight overshoot at 16-bit
-  is sampling noise at 100K unknowns.
+- **Ribbon wins on pure space** across all widths (about 12% more compact
+  than xor). Matches theory: ribbon's overhead is 1.08x, xor's is 1.23x.
+- **Binary fuse sits between xor and ribbon**: ~7% less space than xor
+  at the same FPR with slightly faster build and query. For throughput-
+  sensitive filter use, it's the new default.
+- **Xor is fastest on query** (when successful) but builds slower than
+  binary fuse. Ribbon's Gaussian elimination dominates its build time,
+  which is 4.7x slower than binary fuse at 1M.
+- **Empirical FPR tracks theory** at 8-bit; 16-bit sample sizes can still
+  be too small to resolve the true rate.
 
 ---
 
@@ -551,6 +561,61 @@ is the useful one at this scale.
 - **Practical guidance**: at `num_keys >= 10^7`, target ~1000-5000 keys/shard
   (not the default 15,000). The `partitioned_phf` auto-shard heuristic could
   be tuned to scale shard size down as total N grows.
+
+---
+
+## bench_bloomier: retrieval x oracle compositions
+
+`bloomier<Retrieval, Oracle>` returns `optional<value_type>`. The
+retrieval produces the value; the oracle gates membership. The
+approximate-map path that lives separately from the retrieval (cipher-
+map) path.
+
+### At 1,000,000 keys, M=16 value, 8-bit FPR (~0.4%)
+
+| composition                        | build (ms) | bits/key | query (ns) | FPR     |
+|------------------------------------|-----------:|---------:|-----------:|--------:|
+| ribbon<16> + binary_fuse<8>        |    1,099.8 |    26.46 |     208.4  | 0.41%   |
+| ribbon<16> + xor<8>                |    1,287.7 |    27.12 |     214.4  | 0.33%   |
+| ribbon<16> + ribbon<8>             |    1,655.1 |    25.92 |     234.1  | 0.39%   |
+| pva<phobic5,16> + xor<8>           |  105,067.3 |    28.65 |     149.0  | 0.33%   |
+| pva<phobic5,16> + binary_fuse<8>   |  105,368.8 |    27.98 |     149.9  | 0.41%   |
+
+### At 1,000,000 keys, M=16 value, 16-bit FPR (~0.0015%)
+
+| composition                        | build (ms) | bits/key | query (ns) | FPR        |
+|------------------------------------|-----------:|---------:|-----------:|-----------:|
+| ribbon<16> + binary_fuse<16>       |    1,102.3 |    35.63 |     211.1  | 0%         |
+| ribbon<16> + xor<16>               |    1,178.9 |    36.96 |     214.2  | 0.00015%   |
+| ribbon<16> + ribbon<16>            |    1,650.7 |    34.56 |     230.9  | 0%         |
+
+### Varying M with ribbon<M> + binary_fuse<8> at 1M keys
+
+| M  | build (ms) | bits/key | query (ns) |
+|---:|-----------:|---------:|-----------:|
+|  1 |      688.3 |    10.26 |     201.7  |
+|  8 |    1,102.0 |    17.82 |     202.7  |
+| 16 |    1,099.8 |    26.46 |     208.4  |
+| 32 |    1,078.0 |    43.74 |     213.6  |
+| 64 |    1,172.5 |    78.30 |     262.9  |
+
+### Observations
+
+- **ribbon + binary_fuse is the build-time sweet spot.** At 1M keys,
+  M=16, 8-bit FPR: 1.1 seconds build, 26.46 bits/key, 208 ns/query,
+  0.4% FPR. Comparable to any other 8-bit approximate map.
+- **pva<phobic5,16> + * are the query-latency winners.** 149 ns vs
+  ribbon's 208 ns is a real gap for hot-path lookups. The cost is
+  100x longer build (105s vs 1.1s) from PHOBIC's pilot search.
+- **Space grows linearly in M for ribbon-based compositions.** Each
+  additional M bit adds ~1.08 bits/key from ribbon plus 0 from the
+  oracle (oracle cost is independent of M). Narrow-M approximate maps
+  are especially compact: `ribbon<1> + binary_fuse<8>` at **10.26
+  bits/key** is the tiniest any of our structures can be while still
+  answering "did I see this key + what's its 1-bit value".
+- **Use pva-based only when PHOBIC's build cost is amortized** over
+  many queries or when minimum query latency is worth the 100x build
+  cost. For streaming or repeated-build workloads, ribbon dominates.
 
 ---
 

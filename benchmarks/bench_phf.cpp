@@ -21,12 +21,13 @@
 
 #include "bench_harness.hpp"
 
-#include <maph/algorithms/phobic.hpp>
-#include <maph/algorithms/recsplit.hpp>
-#include <maph/algorithms/chd.hpp>
 #include <maph/algorithms/bbhash.hpp>
+#include <maph/algorithms/chd.hpp>
 #include <maph/algorithms/fch.hpp>
+#include <maph/algorithms/phobic.hpp>
 #include <maph/algorithms/pthash.hpp>
+#include <maph/algorithms/recsplit.hpp>
+#include <maph/algorithms/shock_hash.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -144,6 +145,19 @@ int main(int argc, char** argv) {
         {"pthash98", [&](const auto& keys, size_t q) {
             return run_algo("pthash98", keys, [] { return pthash98::builder{}; }, q);
         }, /*max_keys=*/500},
+
+        // shock_hash: bucketed 2-choice cuckoo with choice bits via ribbon<1>.
+        // Non-minimal (range ~1.67 * num_keys at default settings) but
+        // achieves ~1.9 b/k structurally, well below PHOBIC's 2.7.
+        {"shock_hash64", [&](const auto& keys, size_t q) {
+            return run_algo("shock_hash64", keys,
+                [] { return shock_hash<64>::builder{}; }, q);
+        }, /*max_keys=*/1'000'000},
+
+        {"shock_hash128", [&](const auto& keys, size_t q) {
+            return run_algo("shock_hash128", keys,
+                [] { return shock_hash<128>::builder{}; }, q);
+        }, /*max_keys=*/1'000'000},
     };
 
     std::cerr << "maph PHF benchmark suite\n"

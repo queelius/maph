@@ -1,17 +1,19 @@
 # maph benchmark suite
 
-Eight benchmarks, each aligned with one axis of the library's concept space:
+Ten benchmarks, each aligned with one axis of the library's concept space:
 
 | Benchmark | Concept / Focus | What it compares |
 |-----------|-----------------|------------------|
-| `bench_phf` | `perfect_hash_function` | All PHF implementations at multiple key scales |
+| `bench_phf` | `perfect_hash_function` | All PHF implementations (phobic, bbhash, recsplit, chd, fch, pthash, shock_hash) at multiple scales |
 | `bench_phf_sweep` | `perfect_hash_function` | Parameter sweeps within one algorithm family |
-| `bench_filter` | `membership_oracle` | Standalone approximate-membership structures |
-| `bench_approximate_map` | `approximate_map` | PHF + fingerprint compositions |
+| `bench_filter` | `membership_oracle` | xor_filter, ribbon_filter, binary_fuse_filter at 8/16/32 bits |
+| `bench_approximate_map` | `approximate_map` | PHF + fingerprint compositions via perfect_filter |
 | `bench_phobic_parallel` | PHOBIC build scaling | Thread counts 1/2/4/8 across phobic3/4/5 |
 | `bench_scale` | Partitioned large-scale | `partitioned_phf<phobic5>` at 1M, 10M |
 | `bench_partitioned_sweep` | Partitioning parameter | Shard count x thread count sweep |
 | `bench_partitioned_algos` | Partitioning inner-PHF | `partitioned_phf<Inner>` varying Inner |
+| `bench_retrieval` | `retrieval` | ribbon_retrieval vs phf_value_array across M in {1,8,16,32,64} |
+| `bench_bloomier` | `bloomier` | retrieval x oracle pairs (8 and 16 bit FPR, multiple M) |
 
 All benchmarks share `bench_harness.hpp` and emit TSV to stdout, progress to stderr.
 

@@ -44,3 +44,6 @@ maph_add_benchmark(bench_partitioned_algos)
 
 # Retrieval grid: ribbon vs phf_value_array across value widths.
 maph_add_benchmark(bench_retrieval)
+
+# Bloomier composition grid: retrieval x oracle.
+maph_add_benchmark(bench_bloomier)
