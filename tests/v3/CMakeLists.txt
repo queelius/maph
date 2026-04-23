@@ -48,6 +48,7 @@ set(MAPH_TEST_SOURCES
     test_encoded_retrieval.cpp
     test_binary_fuse.cpp
     test_padded_phf.cpp
+    test_shock_hash.cpp
 )
 
 set(MAPH_TEST_TARGETS "")
