@@ -50,6 +50,7 @@ set(MAPH_TEST_SOURCES
     test_padded_phf.cpp
     test_shock_hash.cpp
     test_bloomier.cpp
+    test_prefix_codec.cpp
 )
 
 set(MAPH_TEST_TARGETS "")
