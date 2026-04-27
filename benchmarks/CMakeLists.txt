@@ -47,3 +47,6 @@ maph_add_benchmark(bench_retrieval)
 
 # Bloomier composition grid: retrieval x oracle.
 maph_add_benchmark(bench_bloomier)
+
+# Codec uniformity: storage diversity vs non-member distribution.
+maph_add_benchmark(bench_codec_uniformity)
